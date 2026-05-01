@@ -324,14 +324,19 @@ async function render() {
 
   for (const session of activeSessions) {
     const elapsed = session.paused ? 0 : Math.max(0, Date.now() - session.startTs);
-    const state = domainState.get(session.domain) ?? { liveElapsedMs: 0, pausedCount: 0, totalCount: 0 };
-    state.liveElapsedMs += elapsed;
+    const state = domainState.get(session.domain) ?? { liveElapsedMs: 0, pausedCount: 0, totalCount: 0, activityId: null };
+    state.liveElapsedMs = Math.max(state.liveElapsedMs, elapsed);
     state.totalCount += 1;
     if (session.paused) state.pausedCount += 1;
+    if (!state.activityId || elapsed >= state.liveElapsedMs) {
+      state.activityId = session.activityId;
+    }
     domainState.set(session.domain, state);
+  }
 
-    if (elapsed > 0 && session.activityId) {
-      activityElapsed.set(session.activityId, (activityElapsed.get(session.activityId) ?? 0) + elapsed);
+  for (const state of domainState.values()) {
+    if (state.liveElapsedMs > 0 && state.activityId) {
+      activityElapsed.set(state.activityId, state.liveElapsedMs);
     }
   }
 

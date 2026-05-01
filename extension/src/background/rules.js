@@ -1,120 +1,15 @@
-// Domains always classified as entertainment regardless of page content.
-export const HARD_ENTERTAINMENT = new Set([
-  // Short-form / social video
-  'tiktok.com',
-  // Photo / social feeds
-  'instagram.com',
-  'facebook.com',
-  'threads.net',
-  'snapchat.com',
-  'pinterest.com',
-  // Microblogging / social
-  'x.com',
-  'twitter.com',
-  'tumblr.com',
-  // Memes / aggregators
-  '9gag.com',
-  'imgur.com',
-  // Tabloid / celebrity news
-  'buzzfeed.com',
-  'tmz.com',
-  // Pure-entertainment streaming
-  'netflix.com',
-  'hulu.com',
-  'disneyplus.com',
-  'primevideo.com',
-  // Reddit treated as hard entertainment by default (promote to MIXED for
-  // subreddit-level granularity if needed)
-  'reddit.com',
-]);
-
-// Domains always classified as productive; never tick the timer.
-export const HARD_PRODUCTIVE = new Set([
-  'github.com',
-  'gitlab.com',
-  'bitbucket.org',
-  'stackoverflow.com',
-  'developer.mozilla.org',
-  'mdn.io',
-  'arxiv.org',
-  'wikipedia.org',
-  'khanacademy.org',
-  'coursera.org',
-  'edx.org',
-  'udacity.com',
-  'figma.com',
-  'notion.so',
-  'linear.app',
-  'jira.atlassian.com',
-  'confluence.atlassian.com',
-  'docs.google.com',
-]);
-
-// Curated mixed-use domains with extra fast paths before Ollama.
-export const MIXED = new Set([
-  'youtube.com',
-  'linkedin.com',
-  'twitch.tv',
-  'medium.com',
-  'substack.com',
-]);
-
-// Regex applied to page title for fast productive classification on MIXED domains.
-const PRODUCTIVE_RE = /\b(tutorial|lecture|course|documentation|how[\s-]to|guide|reference|paper|research|docs|learn|programming|dev\b|api\s+reference)\b/i;
-
-// On these MIXED domains, only specific paths can be entertainment.
-// Every other path (homepage, search, channel pages, etc.) is treated as
-// productive navigation so the timer doesn't run while you're just browsing.
-const ENTERTAINMENT_PATHS_ONLY = {
-  'youtube.com': ['/watch', '/shorts/'],
-};
-
-// URL path prefixes that immediately indicate entertainment on MIXED domains.
-const ENTERTAINMENT_PATHS = {
-  'linkedin.com': ['/feed', '/posts/', '/in/'],
-  'twitch.tv': ['/videos/', '/clip/'],
-};
-
 export const VERDICT = {
   PRODUCTIVE: 'productive',
   ENTERTAINMENT: 'entertainment',
 };
 
 /**
- * Returns a verdict from the rule pre-pass, or null if the domain needs
- * Ollama classification.
+ * Returns a verdict from the local rule pre-pass, or null if the page should
+ * be classified by Ollama. Smart mode is intentionally model-driven: the only
+ * built-in behavior here is that unconfigured domains stay productive by
+ * default so the extension does not classify arbitrary browsing.
  */
-export function ruleClassify(domain, url, title, { allowOllama = false } = {}) {
-  if (HARD_ENTERTAINMENT.has(domain)) return VERDICT.ENTERTAINMENT;
-  if (HARD_PRODUCTIVE.has(domain)) return VERDICT.PRODUCTIVE;
-
-  if (MIXED.has(domain)) {
-    try {
-      const path = new URL(url).pathname;
-
-      // Domains with restricted entertainment paths: only those paths can tick.
-      const restrictedPaths = ENTERTAINMENT_PATHS_ONLY[domain];
-      if (restrictedPaths) {
-        const isEntertainmentPath = restrictedPaths.some(p => path.startsWith(p));
-        if (!isEntertainmentPath) return VERDICT.PRODUCTIVE;
-        // Falls through to keyword check + Ollama for the entertainment-eligible paths.
-      }
-
-      // Fast-path: URL immediately signals entertainment.
-      const entertainmentPaths = ENTERTAINMENT_PATHS[domain] ?? [];
-      if (entertainmentPaths.some(p => path.startsWith(p))) return VERDICT.ENTERTAINMENT;
-    } catch { /* ignore */ }
-
-    // Title keyword fast-path → productive.
-    if (PRODUCTIVE_RE.test(title)) return VERDICT.PRODUCTIVE;
-
-    // Needs Ollama when this is a configured Smart domain.
-    return allowOllama ? null : VERDICT.PRODUCTIVE;
-  }
-
-  // Configured smart domains can use Ollama even when they are not in MIXED.
+export function ruleClassify(_domain, _url, _title, { allowOllama = false } = {}) {
   if (allowOllama) return null;
-
-  // Unconfigured/unknown domains stay productive by default.
   return VERDICT.PRODUCTIVE;
 }

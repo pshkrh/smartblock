@@ -23,15 +23,14 @@ SmartBlock is a Chrome extension for time blocking mixed-use websites with a loc
 
 - Tracks configured domains in `Smart` or `Strict` mode.
 - Uses a local Ollama model for page classification.
-- Uses manual overrides, fast rules, and cache before making a fresh model call.
+- Uses manual overrides and cache before making a fresh model call.
 - Redirects over-limit domains to a block page.
 - Shows an Activity view with counted vs ignored pages, source labels, overrides, and cache clearing.
 
 ## Current Behavior
 
 - SmartBlock only tracks domains you explicitly add in the popup.
-- SmartBlock currently maintains a single active counting session at a time.
-- If two distracting tabs are open on different monitors, the extension does not yet count both simultaneously.
+- SmartBlock can count tracked tabs across multiple Brave/Chrome windows at the same time.
 - Ollama status in the popup is tied to the selected model:
   - `?` no model selected yet
   - `✓` available in Ollama
@@ -43,16 +42,9 @@ SmartBlock is a Chrome extension for time blocking mixed-use websites with a loc
 For Smart domains, SmartBlock evaluates a page in this order:
 
 1. Manual override from the Activity tab
-2. Fast local rules
-3. Cached classification
-4. Ollama classification
-5. Fail-open fallback to productive if Ollama is unavailable
-
-The built-in rule pass keeps some sites deterministic:
-
-- `HARD_ENTERTAINMENT`: always counted on Smart domains
-- `HARD_PRODUCTIVE`: never counted on Smart domains
-- `MIXED`: curated fast paths before Ollama
+2. Cached classification
+3. Ollama classification
+4. Fail-open fallback to productive if Ollama is unavailable or no model is selected
 
 ## Install
 
@@ -147,15 +139,11 @@ extension/
     └── block/
 ```
 
-## Customizing Rules
+## Customizing Behavior
 
-Edit [`extension/src/background/rules.js`](extension/src/background/rules.js) to tune domain behavior:
+Use `Strict` mode when you want a site to count deterministically.
 
-- `HARD_ENTERTAINMENT`
-- `HARD_PRODUCTIVE`
-- `MIXED`
-
-Reload the extension after changing the rules.
+Use `Smart` mode when you want SmartBlock to classify each page with Ollama and only count distracting content.
 
 ## Troubleshooting
 

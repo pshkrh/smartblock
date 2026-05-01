@@ -52,6 +52,7 @@ export async function flushElapsed() {
   const nextSessions = [];
   const usageCache = new Map();
   const limitCache = new Map();
+  const domainProgress = new Map();
   const now = Date.now();
 
   for (const session of activeSessions) {
@@ -66,33 +67,43 @@ export async function flushElapsed() {
       continue;
     }
 
-    let current = usageCache.get(session.domain);
+    nextSessions.push({ ...session, startTs: now });
+
+    const existing = domainProgress.get(session.domain);
+    if (!existing || elapsed > existing.elapsed) {
+      domainProgress.set(session.domain, {
+        elapsed,
+        activityId: session.activityId,
+      });
+    }
+  }
+
+  for (const [domain, progress] of domainProgress.entries()) {
+    let current = usageCache.get(domain);
     if (!current) {
-      current = await getUsage(session.domain);
-      usageCache.set(session.domain, current);
+      current = await getUsage(domain);
+      usageCache.set(domain, current);
     }
 
-    let limitMs = limitCache.get(session.domain);
+    let limitMs = limitCache.get(domain);
     if (!limitMs) {
-      limitMs = await getLimitMs(session.domain);
-      limitCache.set(session.domain, limitMs);
+      limitMs = await getLimitMs(domain);
+      limitCache.set(domain, limitMs);
     }
 
     const effectiveLimit = limitMs + (current.extraMs ?? 0);
     const remaining = Math.max(0, effectiveLimit - current.ms);
-    const banked = Math.min(elapsed, remaining);
-
-    nextSessions.push({ ...session, startTs: now });
+    const banked = Math.min(progress.elapsed, remaining);
 
     if (banked > 0) {
-      const usage = await addMs(session.domain, banked);
-      usageCache.set(session.domain, usage);
-      await addActivityMs(session.activityId, banked);
+      const usage = await addMs(domain, banked);
+      usageCache.set(domain, usage);
+      await addActivityMs(progress.activityId, banked);
       if (usage.ms >= effectiveLimit && onLimitReached) {
-        onLimitReached(session.domain);
+        onLimitReached(domain);
       }
     } else if (current.ms >= effectiveLimit && onLimitReached) {
-      onLimitReached(session.domain);
+      onLimitReached(domain);
     }
   }
 
