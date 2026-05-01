@@ -3,7 +3,7 @@ import { localDateKey } from '../shared/date.js';
 
 const params = new URLSearchParams(location.search);
 const domain = params.get('domain') ?? '';
-const fromUrl = params.get('from') ?? `https://${domain}`;
+const fromUrl = params.get('from') ?? '';
 
 function fmtMs(ms) {
   const totalSec = Math.floor(ms / 1000);
@@ -46,7 +46,7 @@ async function init() {
 
   const { shouldUnblock, usage } = await checkShouldUnblock();
   if (shouldUnblock) {
-    location.replace(fromUrl || `https://${domain}`);
+    resumeBrowsing();
     return;
   }
 
@@ -59,11 +59,30 @@ async function init() {
   }, 1000);
 }
 
+function resumeBrowsing() {
+  if (fromUrl) {
+    location.replace(fromUrl);
+    return;
+  }
+
+  if (history.length > 1) {
+    history.back();
+    setTimeout(() => {
+      if (location.pathname.endsWith('/src/block/block.html')) {
+        location.replace(`https://${domain}`);
+      }
+    }, 250);
+    return;
+  }
+
+  location.replace(`https://${domain}`);
+}
+
 // Auto-redirect when the limit is raised or the domain is removed from config.
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local' || !('config' in changes)) return;
   checkShouldUnblock().then(({ shouldUnblock }) => {
-    if (shouldUnblock) location.replace(fromUrl || `https://${domain}`);
+    if (shouldUnblock) resumeBrowsing();
   });
 });
 

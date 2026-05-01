@@ -1,23 +1,29 @@
 import { MSG } from '../shared/messages.js';
 import { BLOCK_MODE, DEFAULT_LIMIT_MINUTES, defaultConfig } from '../shared/config.js';
-import { checkOllamaReachable } from '../shared/ollama.js';
+import { getOllamaStatus as fetchOllamaStatus } from '../shared/ollama.js';
 import { extractDomain } from '../shared/domain.js';
 
 // Cache Ollama reachability — checking every second would spam the network.
-let ollamaOk = false;
+let ollamaStatus = { ok: false, reason: 'offline', model: '' };
 let ollamaCheckedAt = 0;
 async function getOllamaStatus() {
   if (Date.now() - ollamaCheckedAt > 15000) {
-    ollamaOk = await checkOllamaReachable();
+    ollamaStatus = await fetchOllamaStatus();
     ollamaCheckedAt = Date.now();
   }
-  return ollamaOk;
+  return ollamaStatus;
 }
 
 async function refreshOllamaStatus() {
-  ollamaOk = await checkOllamaReachable();
+  ollamaStatus = await fetchOllamaStatus();
   ollamaCheckedAt = Date.now();
-  return ollamaOk;
+  return ollamaStatus;
+}
+
+function ollamaStatusLabel(status) {
+  if (status.ok) return `Ollama: ${status.model}`;
+  if (status.reason === 'missing_model') return `Missing: ${status.model}`;
+  return 'Ollama offline';
 }
 
 function fmtMs(ms) {
@@ -244,7 +250,7 @@ async function render() {
   if (document.activeElement?.classList.contains('limit-input') ||
       document.activeElement?.classList.contains('mode-select')) return;
 
-  const [status, config, isOllamaOk, sessionData] = await Promise.all([
+  const [status, config, ollama, sessionData] = await Promise.all([
     loadStatus(),
     getConfig(),
     getOllamaStatus(),
@@ -257,8 +263,8 @@ async function render() {
 
   // Status badge
   const badge = document.getElementById('status-badge');
-  badge.textContent = isOllamaOk ? 'Ollama ✓' : 'Ollama offline';
-  badge.className = 'badge ' + (isOllamaOk ? 'ok' : 'offline');
+  badge.textContent = ollamaStatusLabel(ollama);
+  badge.className = 'badge ' + (ollama.ok ? 'ok' : 'offline');
 
   // Usage table
   const tbody = document.getElementById('usage-body');
