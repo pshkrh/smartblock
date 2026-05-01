@@ -19,13 +19,16 @@ function normalizeConfig(config) {
   const defaultLimitMinutes = Number.isFinite(source.defaultLimitMinutes)
     ? source.defaultLimitMinutes
     : defaults.defaultLimitMinutes;
+  const ollamaModel = typeof source.ollamaModel === 'string' && source.ollamaModel
+    ? source.ollamaModel
+    : defaults.ollamaModel;
   const domains = {};
 
   for (const [domain, domainConfig] of Object.entries(source.domains ?? {})) {
     domains[domain] = normalizeDomainConfig(domainConfig, defaultLimitMinutes);
   }
 
-  return { ...source, defaultLimitMinutes, domains };
+  return { ...source, defaultLimitMinutes, ollamaModel, domains };
 }
 
 export async function getConfig() {
@@ -95,14 +98,14 @@ export async function clearTodayDomainData(domain) {
 
 // --- Classification cache ---
 
-async function cacheKey(domain, url, title) {
-  const raw = new TextEncoder().encode(domain + '\x1f' + url + '\x1f' + title);
+async function cacheKey(domain, url, title, model) {
+  const raw = new TextEncoder().encode(domain + '\x1f' + url + '\x1f' + title + '\x1f' + model);
   const buf = await crypto.subtle.digest('SHA-256', raw);
   return 'cache_' + Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-export async function getCached(domain, url, title) {
-  const key = await cacheKey(domain, url, title);
+export async function getCached(domain, url, title, model) {
+  const key = await cacheKey(domain, url, title, model);
   const result = await chrome.storage.local.get(key);
   const entry = result[key];
   if (!entry) return null;
@@ -110,8 +113,8 @@ export async function getCached(domain, url, title) {
   return entry.verdict;
 }
 
-export async function setCached(domain, url, title, verdict) {
-  const key = await cacheKey(domain, url, title);
+export async function setCached(domain, url, title, model, verdict) {
+  const key = await cacheKey(domain, url, title, model);
   await chrome.storage.local.set({ [key]: { verdict, ts: Date.now() } });
 }
 

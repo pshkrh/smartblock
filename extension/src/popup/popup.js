@@ -1,29 +1,76 @@
 import { MSG } from '../shared/messages.js';
-import { BLOCK_MODE, DEFAULT_LIMIT_MINUTES, defaultConfig } from '../shared/config.js';
-import { getOllamaStatus as fetchOllamaStatus } from '../shared/ollama.js';
+import { BLOCK_MODE, DEFAULT_LIMIT_MINUTES, DEFAULT_OLLAMA_MODEL, defaultConfig } from '../shared/config.js';
+import { getOllamaStatus as fetchOllamaStatus, listInstalledModels } from '../shared/ollama.js';
 import { extractDomain } from '../shared/domain.js';
 
 // Cache Ollama reachability — checking every second would spam the network.
-let ollamaStatus = { ok: false, reason: 'offline', model: '' };
+let ollamaStatus = { ok: false, reason: 'offline', model: DEFAULT_OLLAMA_MODEL, models: [] };
 let ollamaCheckedAt = 0;
-async function getOllamaStatus() {
+let installedModels = [];
+let modelsCheckedAt = 0;
+
+async function getOllamaStatus(model) {
   if (Date.now() - ollamaCheckedAt > 15000) {
-    ollamaStatus = await fetchOllamaStatus();
+    ollamaStatus = await fetchOllamaStatus(model);
     ollamaCheckedAt = Date.now();
   }
   return ollamaStatus;
 }
 
-async function refreshOllamaStatus() {
-  ollamaStatus = await fetchOllamaStatus();
+async function refreshOllamaStatus(model) {
+  ollamaStatus = await fetchOllamaStatus(model);
   ollamaCheckedAt = Date.now();
   return ollamaStatus;
 }
 
+async function getInstalledModels() {
+  if (Date.now() - modelsCheckedAt > 15000) {
+    installedModels = await listInstalledModels();
+    modelsCheckedAt = Date.now();
+  }
+  return installedModels;
+}
+
+async function refreshInstalledModels() {
+  installedModels = await listInstalledModels();
+  modelsCheckedAt = Date.now();
+  return installedModels;
+}
+
 function ollamaStatusLabel(status) {
-  if (status.ok) return `Ollama: ${status.model}`;
-  if (status.reason === 'missing_model') return `Missing: ${status.model}`;
+  if (status.ok) return '✓';
+  if (status.reason === 'missing_model') return '!';
+  return '×';
+}
+
+function ollamaStatusTitle(status) {
+  if (status.ok) return 'Model available in Ollama';
+  if (status.reason === 'missing_model') return 'Selected model not installed';
   return 'Ollama offline';
+}
+
+function renderModelOptions(selectedModel, models) {
+  const select = document.getElementById('model-select');
+  select.textContent = '';
+
+  const uniqueModels = [...new Set([selectedModel, ...models].filter(Boolean))];
+  if (uniqueModels.length === 0) {
+    const option = document.createElement('option');
+    option.value = selectedModel || DEFAULT_OLLAMA_MODEL;
+    option.textContent = 'No models found';
+    select.appendChild(option);
+    select.disabled = true;
+    return;
+  }
+
+  select.disabled = false;
+  for (const model of uniqueModels) {
+    const option = document.createElement('option');
+    option.value = model;
+    option.textContent = model;
+    option.selected = model === selectedModel;
+    select.appendChild(option);
+  }
 }
 
 function fmtMs(ms) {
@@ -237,8 +284,14 @@ async function setActivityOverride(id, verdict) {
 
 async function getConfig() {
   const { config } = await chrome.storage.local.get('config');
-  const cfg = config ?? defaultConfig();
-  return { ...cfg, domains: cfg.domains ?? {} };
+  const defaults = defaultConfig();
+  const cfg = config ?? defaults;
+  return {
+    ...defaults,
+    ...cfg,
+    domains: cfg.domains ?? {},
+    ollamaModel: cfg.ollamaModel || defaults.ollamaModel,
+  };
 }
 
 async function saveConfig(config) {
@@ -250,10 +303,11 @@ async function render() {
   if (document.activeElement?.classList.contains('limit-input') ||
       document.activeElement?.classList.contains('mode-select')) return;
 
-  const [status, config, ollama, sessionData] = await Promise.all([
+  const config = await getConfig();
+  const [status, models, ollama, sessionData] = await Promise.all([
     loadStatus(),
-    getConfig(),
-    getOllamaStatus(),
+    getInstalledModels(),
+    getOllamaStatus(config.ollamaModel),
     chrome.storage.session.get('activeSession'),
   ]);
 
@@ -264,7 +318,11 @@ async function render() {
   // Status badge
   const badge = document.getElementById('status-badge');
   badge.textContent = ollamaStatusLabel(ollama);
-  badge.className = 'badge ' + (ollama.ok ? 'ok' : 'offline');
+  const badgeState = ollama.ok ? 'ok' : (ollama.reason === 'missing_model' ? 'missing' : 'offline');
+  badge.className = `badge ${badgeState}`;
+  badge.title = ollamaStatusTitle(ollama);
+
+  renderModelOptions(config.ollamaModel, models);
 
   // Usage table
   const tbody = document.getElementById('usage-body');
@@ -414,9 +472,23 @@ document.getElementById('add-btn').addEventListener('click', addDomain);
 document.getElementById('refresh-ollama').addEventListener('click', async () => {
   const btn = document.getElementById('refresh-ollama');
   btn.disabled = true;
-  await refreshOllamaStatus();
+  const config = await getConfig();
+  await Promise.all([
+    refreshInstalledModels(),
+    refreshOllamaStatus(config.ollamaModel),
+  ]);
   await render();
   btn.disabled = false;
+});
+
+document.getElementById('model-select').addEventListener('change', async (event) => {
+  const select = event.currentTarget;
+  const model = select.value || DEFAULT_OLLAMA_MODEL;
+  const config = await getConfig();
+  config.ollamaModel = model;
+  await saveConfig(config);
+  await refreshOllamaStatus(model);
+  await render();
 });
 
 document.getElementById('clear-cache').addEventListener('click', async () => {

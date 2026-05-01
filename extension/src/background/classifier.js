@@ -1,4 +1,4 @@
-import { OLLAMA_URL, OLLAMA_MODEL, OLLAMA_TIMEOUT_MS } from '../shared/config.js';
+import { OLLAMA_URL, DEFAULT_OLLAMA_MODEL, OLLAMA_TIMEOUT_MS } from '../shared/config.js';
 import { ruleClassify, VERDICT } from './rules.js';
 import { getCached, getOverride, setCached } from './storage.js';
 
@@ -16,7 +16,7 @@ TITLE: ${title}
 SNIPPET: ${snippet}`;
 }
 
-async function callOllama(url, title, snippet) {
+async function callOllama(url, title, snippet, model) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), OLLAMA_TIMEOUT_MS);
   try {
@@ -24,7 +24,7 @@ async function callOllama(url, title, snippet) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: OLLAMA_MODEL,
+        model,
         prompt: buildPrompt(url, title, snippet),
         format: 'json',
         stream: false,
@@ -53,6 +53,7 @@ async function callOllama(url, title, snippet) {
  *   'fallback' - Ollama unavailable; defaulting to productive
  */
 export async function classify(domain, url, title, snippet, options = {}) {
+  const model = options.ollamaModel || DEFAULT_OLLAMA_MODEL;
   const override = await getOverride(domain, url, title);
   if (override) return { verdict: override, source: 'override' };
 
@@ -63,13 +64,13 @@ export async function classify(domain, url, title, snippet, options = {}) {
   }
 
   // Cache lookup for pages that need model classification.
-  const cached = await getCached(domain, url, title);
+  const cached = await getCached(domain, url, title, model);
   if (cached) return { verdict: cached, source: 'cache' };
 
   // Ollama
-  const ollamaVerdict = await callOllama(url, title, snippet);
+  const ollamaVerdict = await callOllama(url, title, snippet, model);
   if (ollamaVerdict) {
-    await setCached(domain, url, title, ollamaVerdict);
+    await setCached(domain, url, title, model, ollamaVerdict);
     return { verdict: ollamaVerdict, source: 'ollama' };
   }
 

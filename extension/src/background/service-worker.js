@@ -249,6 +249,7 @@ async function processTabInfo(tabId, windowId, domain, { url, title, snippet, vi
   } else {
     const result = await classify(domain, url, title ?? '', snippet ?? '', {
       allowOllama: true,
+      ollamaModel: config.ollamaModel,
     });
     verdict = result.verdict;
     source = result.source;
