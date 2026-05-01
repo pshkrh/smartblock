@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Time's up</title>
+  <link rel="stylesheet" href="block.css">
+</head>
+<body>
+  <div class="card">
+    <img class="icon" src="../../icons/icon128.png" alt="">
+    <h1>Time's up</h1>
+    <p class="domain" id="domain-label"></p>
+    <p class="message">You've used all your entertainment time on this site today.</p>
+
+    <div class="stats">
+      <div class="stat">
+        <span class="stat-value" id="used-time">—</span>
+        <span class="stat-label">used today</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value" id="reset-time">—</span>
+        <span class="stat-label">until reset</span>
+      </div>
+    </div>
+
+    <button id="snooze-btn" class="snooze-btn">Snooze 5 minutes</button>
+    <p id="snooze-used" class="snooze-used" style="display:none">
+      Snooze already used today.
+    </p>
+  </div>
+
+  <script type="module" src="block.js"></script>
+</body>
+</html>

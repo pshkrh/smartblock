@@ -1,0 +1,165 @@
+:root {
+  --bg: #101417;
+  --surface: #171d21;
+  --surface-soft: #20272c;
+  --border: #2c363b;
+  --text: #edf2f3;
+  --text-soft: #c7d0d2;
+  --muted: #829093;
+  --faint: #657275;
+  --teal: #21c7bd;
+  --amber: #f6b744;
+  --amber-soft: #2f2513;
+  --red: #ee6b61;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  display: grid;
+  min-height: 100vh;
+  margin: 0;
+  place-items: center;
+  padding: 28px;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(33, 199, 189, 0.14), transparent 34%),
+    var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.card {
+  width: min(100%, 440px);
+  padding: 34px 34px 32px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  text-align: center;
+}
+
+.icon {
+  display: block;
+  width: 76px;
+  height: 76px;
+  margin: 0 auto 18px;
+  border-radius: 17px;
+}
+
+h1 {
+  margin: 0 0 8px;
+  color: var(--text);
+  font-size: 28px;
+  font-weight: 750;
+  letter-spacing: 0;
+  line-height: 1.15;
+}
+
+.domain {
+  max-width: 100%;
+  margin: 0 0 14px;
+  overflow-wrap: anywhere;
+  color: var(--teal);
+  font-size: 15px;
+  font-weight: 750;
+  line-height: 1.35;
+}
+
+.message {
+  max-width: 310px;
+  margin: 0 auto 28px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 28px;
+}
+
+.stat {
+  min-width: 0;
+  padding: 15px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.stat-value {
+  display: block;
+  min-height: 28px;
+  overflow: hidden;
+  color: var(--text-soft);
+  font-size: 22px;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stat-label {
+  display: block;
+  margin-top: 5px;
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.06em;
+  line-height: 1.25;
+  text-transform: uppercase;
+}
+
+.snooze-btn {
+  min-width: 172px;
+  min-height: 40px;
+  border: 1px solid rgba(246, 183, 68, 0.5);
+  border-radius: 7px;
+  background: var(--amber-soft);
+  color: var(--amber);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 750;
+  line-height: 1.2;
+  padding: 10px 20px;
+}
+
+.snooze-btn:hover:not(:disabled) {
+  border-color: var(--amber);
+  background: #3a2b13;
+}
+
+.snooze-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.snooze-used {
+  min-height: 18px;
+  margin: 10px 0 0;
+  color: var(--faint);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+@media (max-width: 520px) {
+  body {
+    padding: 18px;
+  }
+
+  .card {
+    padding: 28px 20px 26px;
+  }
+
+  .stats {
+    grid-template-columns: 1fr;
+  }
+}
