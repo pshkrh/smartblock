@@ -1,5 +1,4 @@
 export const MSG = {
-  TAB_INFO: 'TAB_INFO',
   GET_INFO: 'GET_INFO',
   GET_STATUS: 'GET_STATUS',
   RECONCILE: 'RECONCILE',

@@ -1,84 +1,14 @@
 import { VERDICT } from './rules.js';
 import {
   addActivityMs, addMs, isOverLimit, getLimitMs, getUsage, getConfig,
-  getSession, setActiveSession, setCurrentTab,
+  getSession, setActiveSessions, setCurrentTab,
 } from './storage.js';
 
 let onLimitReached = null;
 export function setLimitReachedCallback(cb) { onLimitReached = cb; }
 
-export async function flushElapsed() {
-  const { activeSession } = await getSession();
-  if (!activeSession || activeSession.paused) return;
-
-  const elapsed = Date.now() - activeSession.startTs;
-  if (elapsed <= 0) return;
-
-  // Cap elapsed so storage never exceeds the effective limit (alarms can fire late).
-  const [current, limitMs] = await Promise.all([getUsage(activeSession.domain), getLimitMs(activeSession.domain)]);
-  const effectiveLimit = limitMs + (current.extraMs ?? 0);
-  const remaining = Math.max(0, effectiveLimit - current.ms);
-  const banked = Math.min(elapsed, remaining);
-
-  await setActiveSession({ ...activeSession, startTs: Date.now() });
-
-  if (banked > 0) {
-    const usage = await addMs(activeSession.domain, banked);
-    await addActivityMs(activeSession.activityId, banked);
-    if (usage.ms >= effectiveLimit && onLimitReached) {
-      onLimitReached(activeSession.domain);
-    }
-  } else if (current.ms >= effectiveLimit && onLimitReached) {
-    onLimitReached(activeSession.domain);
-  }
-}
-
-export async function onVerdictChanged({ tabId, windowId, domain, verdict, url, activityId, mode }) {
-  const tabData = { tabId, windowId, domain, verdict, url, activityId, mode };
-  const { activeSession } = await getSession();
-
-  if (verdict === VERDICT.ENTERTAINMENT) {
-    // Switch to this entertainment tab. Flush whatever was running first.
-    await flushElapsed();
-    await setCurrentTab(tabData);
-
-    // Only track domains that have an explicit limit configured.
-    const config = await getConfig();
-    if (!config.domains[domain]) {
-      await setActiveSession(null);
-      return;
-    }
-
-    const overLimit = await isOverLimit(domain);
-    if (overLimit) {
-      await setActiveSession(null);
-      if (onLimitReached) onLimitReached(domain);
-      return;
-    }
-    // activeSession stores windowId so we can scope stop events to the right window.
-    await setActiveSession({ domain, tabId, windowId, startTs: Date.now(), activityId, mode });
-    await scheduleBlockAlarm(domain);
-  } else {
-    // Productive/neutral tab. Only stop the entertainment session if this event
-    // came from the SAME window as the entertainment (user switched away within
-    // that window). A productive tab firing in a DIFFERENT window means the user
-    // is just doing other things while the video plays on another monitor —
-    // keep the timer running.
-    if (activeSession && activeSession.windowId === windowId) {
-      chrome.alarms.clear(`block_${activeSession.domain}`);
-      await flushElapsed();
-      await setActiveSession(null);
-    }
-    await setCurrentTab(tabData);
-  }
-}
-
-// Called when Chrome loses focus entirely (user switches to another app).
-export async function onWindowBlurred() {
-  const { activeSession } = await getSession();
-  if (activeSession) chrome.alarms.clear(`block_${activeSession.domain}`);
-  await flushElapsed();
-  await setActiveSession(null);
+function uniqueDomains(sessions) {
+  return [...new Set(sessions.map(session => session.domain))];
 }
 
 async function scheduleBlockAlarm(domain) {
@@ -87,21 +17,184 @@ async function scheduleBlockAlarm(domain) {
   const remainingMs = effectiveLimit - usage.ms;
   if (remainingMs > 0) {
     chrome.alarms.create(`block_${domain}`, { when: Date.now() + remainingMs });
+  } else {
+    chrome.alarms.clear(`block_${domain}`);
   }
 }
 
-export async function pauseSession() {
-  const { activeSession } = await getSession();
-  if (!activeSession || activeSession.paused) return;
-  await flushElapsed(); // bank elapsed before pausing
-  await setActiveSession({ ...activeSession, paused: true });
+async function refreshDomainAlarms(sessions) {
+  const domains = uniqueDomains(sessions);
+  for (const domain of domains) {
+    const hasRunningSession = sessions.some(session => session.domain === domain && !session.paused);
+    if (hasRunningSession) {
+      await scheduleBlockAlarm(domain);
+    } else {
+      chrome.alarms.clear(`block_${domain}`);
+    }
+  }
 }
 
-export async function resumeSession() {
-  const { activeSession } = await getSession();
-  if (!activeSession || !activeSession.paused) return;
-  await setActiveSession({ ...activeSession, paused: false, startTs: Date.now() });
-  await scheduleBlockAlarm(activeSession.domain);
+async function replaceSessions(nextSessions, previousSessions = []) {
+  await setActiveSessions(nextSessions);
+  const clearedDomains = uniqueDomains(previousSessions).filter(
+    domain => !nextSessions.some(session => session.domain === domain)
+  );
+  for (const domain of clearedDomains) {
+    chrome.alarms.clear(`block_${domain}`);
+  }
+  await refreshDomainAlarms(nextSessions);
+}
+
+export async function flushElapsed() {
+  const { activeSessions } = await getSession();
+  if (!activeSessions.length) return;
+
+  const nextSessions = [];
+  const usageCache = new Map();
+  const limitCache = new Map();
+  const now = Date.now();
+
+  for (const session of activeSessions) {
+    if (session.paused) {
+      nextSessions.push(session);
+      continue;
+    }
+
+    const elapsed = now - session.startTs;
+    if (elapsed <= 0) {
+      nextSessions.push(session);
+      continue;
+    }
+
+    let current = usageCache.get(session.domain);
+    if (!current) {
+      current = await getUsage(session.domain);
+      usageCache.set(session.domain, current);
+    }
+
+    let limitMs = limitCache.get(session.domain);
+    if (!limitMs) {
+      limitMs = await getLimitMs(session.domain);
+      limitCache.set(session.domain, limitMs);
+    }
+
+    const effectiveLimit = limitMs + (current.extraMs ?? 0);
+    const remaining = Math.max(0, effectiveLimit - current.ms);
+    const banked = Math.min(elapsed, remaining);
+
+    nextSessions.push({ ...session, startTs: now });
+
+    if (banked > 0) {
+      const usage = await addMs(session.domain, banked);
+      usageCache.set(session.domain, usage);
+      await addActivityMs(session.activityId, banked);
+      if (usage.ms >= effectiveLimit && onLimitReached) {
+        onLimitReached(session.domain);
+      }
+    } else if (current.ms >= effectiveLimit && onLimitReached) {
+      onLimitReached(session.domain);
+    }
+  }
+
+  await setActiveSessions(nextSessions);
+}
+
+export async function onVerdictChanged({ tabId, windowId, domain, verdict, url, activityId, mode }) {
+  const tabData = { tabId, windowId, domain, verdict, url, activityId, mode };
+  const { activeSessions } = await getSession();
+
+  await flushElapsed();
+  const { activeSessions: flushedSessions } = await getSession();
+  await setCurrentTab(tabData);
+
+  if (verdict === VERDICT.ENTERTAINMENT) {
+    const config = await getConfig();
+    if (!config.domains[domain]) {
+      const nextSessions = flushedSessions.filter(session => session.windowId !== windowId);
+      await replaceSessions(nextSessions, flushedSessions);
+      return;
+    }
+
+    const overLimit = await isOverLimit(domain);
+    if (overLimit) {
+      const nextSessions = flushedSessions.filter(session => session.windowId !== windowId);
+      await replaceSessions(nextSessions, flushedSessions);
+      if (onLimitReached) onLimitReached(domain);
+      return;
+    }
+
+    const nextSession = { domain, tabId, windowId, startTs: Date.now(), activityId, mode };
+    const nextSessions = [
+      ...flushedSessions.filter(session => session.windowId !== windowId),
+      nextSession,
+    ];
+    await replaceSessions(nextSessions, flushedSessions);
+    return;
+  }
+
+  const nextSessions = flushedSessions.filter(session => session.windowId !== windowId);
+  await replaceSessions(nextSessions, flushedSessions);
+}
+
+export async function onWindowBlurred() {
+  const { activeSessions } = await getSession();
+  if (!activeSessions.length) return;
+  await flushElapsed();
+  await replaceSessions([], activeSessions);
+}
+
+export async function pauseSession(tabId, windowId) {
+  await flushElapsed();
+  const { activeSessions } = await getSession();
+  let changed = false;
+  const nextSessions = activeSessions.map(session => {
+    if (session.tabId === tabId && session.windowId === windowId && !session.paused) {
+      changed = true;
+      return { ...session, paused: true };
+    }
+    return session;
+  });
+  if (changed) await replaceSessions(nextSessions, activeSessions);
+}
+
+export async function resumeSession(tabId, windowId) {
+  const { activeSessions } = await getSession();
+  let changed = false;
+  const nextSessions = activeSessions.map(session => {
+    if (session.tabId === tabId && session.windowId === windowId && session.paused) {
+      changed = true;
+      return { ...session, paused: false, startTs: Date.now() };
+    }
+    return session;
+  });
+  if (changed) await replaceSessions(nextSessions, activeSessions);
+}
+
+export async function stopSessionByTab(tabId) {
+  await flushElapsed();
+  const { activeSessions } = await getSession();
+  const nextSessions = activeSessions.filter(session => session.tabId !== tabId);
+  if (nextSessions.length !== activeSessions.length) {
+    await replaceSessions(nextSessions, activeSessions);
+  }
+}
+
+export async function stopSessionsByWindow(windowId) {
+  await flushElapsed();
+  const { activeSessions } = await getSession();
+  const nextSessions = activeSessions.filter(session => session.windowId !== windowId);
+  if (nextSessions.length !== activeSessions.length) {
+    await replaceSessions(nextSessions, activeSessions);
+  }
+}
+
+export async function stopSessionsByDomain(domain) {
+  await flushElapsed();
+  const { activeSessions } = await getSession();
+  const nextSessions = activeSessions.filter(session => session.domain !== domain);
+  if (nextSessions.length !== activeSessions.length) {
+    await replaceSessions(nextSessions, activeSessions);
+  }
 }
 
 export async function getDomainStatus(domain) {

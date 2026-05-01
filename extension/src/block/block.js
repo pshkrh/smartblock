@@ -5,6 +5,18 @@ const params = new URLSearchParams(location.search);
 const domain = params.get('domain') ?? '';
 const fromUrl = params.get('from') ?? '';
 
+function isSafeReturnUrl(urlString) {
+  if (!urlString || !domain) return false;
+  try {
+    const parsed = new URL(urlString);
+    if (!['http:', 'https:'].includes(parsed.protocol)) return false;
+    const hostname = parsed.hostname.replace(/^www\./, '');
+    return hostname === domain || hostname.endsWith(`.${domain}`);
+  } catch {
+    return false;
+  }
+}
+
 function fmtMs(ms) {
   const totalSec = Math.floor(ms / 1000);
   const h = Math.floor(totalSec / 3600);
@@ -60,7 +72,7 @@ async function init() {
 }
 
 function resumeBrowsing() {
-  if (fromUrl) {
+  if (isSafeReturnUrl(fromUrl)) {
     location.replace(fromUrl);
     return;
   }

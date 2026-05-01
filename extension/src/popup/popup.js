@@ -1,40 +1,32 @@
 import { MSG } from '../shared/messages.js';
 import { BLOCK_MODE, DEFAULT_LIMIT_MINUTES, defaultConfig } from '../shared/config.js';
-import { getOllamaStatus as fetchOllamaStatus, listInstalledModels } from '../shared/ollama.js';
+import { getOllamaState as fetchOllamaState } from '../shared/ollama.js';
 import { extractDomain } from '../shared/domain.js';
 
 // Cache Ollama reachability — checking every second would spam the network.
-let ollamaStatus = { ok: false, reason: 'unselected', model: '', models: [] };
+let ollamaState = { ok: false, reason: 'unselected', model: '', models: [] };
 let ollamaCheckedAt = 0;
-let installedModels = [];
-let modelsCheckedAt = 0;
+let statusSnapshot = { domains: [], activity: [] };
+let statusCheckedAt = 0;
 
-async function getOllamaStatus(model) {
+async function getOllamaState(model) {
+  const targetModel = typeof model === 'string' ? model.trim() : '';
   if (Date.now() - ollamaCheckedAt > 15000) {
-    ollamaStatus = await fetchOllamaStatus(model);
+    ollamaState = await fetchOllamaState(targetModel);
     ollamaCheckedAt = Date.now();
   }
-  return ollamaStatus;
-}
-
-async function refreshOllamaStatus(model) {
-  ollamaStatus = await fetchOllamaStatus(model);
-  ollamaCheckedAt = Date.now();
-  return ollamaStatus;
-}
-
-async function getInstalledModels() {
-  if (Date.now() - modelsCheckedAt > 15000) {
-    installedModels = await listInstalledModels();
-    modelsCheckedAt = Date.now();
+  if (ollamaState.model === targetModel || (!targetModel && ollamaState.reason === 'unselected')) {
+    return ollamaState;
   }
-  return installedModels;
+  ollamaState = await fetchOllamaState(targetModel);
+  ollamaCheckedAt = Date.now();
+  return ollamaState;
 }
 
-async function refreshInstalledModels() {
-  installedModels = await listInstalledModels();
-  modelsCheckedAt = Date.now();
-  return installedModels;
+async function refreshOllamaState(model) {
+  ollamaState = await fetchOllamaState(model);
+  ollamaCheckedAt = Date.now();
+  return ollamaState;
 }
 
 function ollamaStatusLabel(status) {
@@ -127,12 +119,13 @@ function sourceLabel(source) {
   if (source === 'ollama') return 'Ollama';
   if (source === 'cache') return 'Cache';
   if (source === 'strict') return 'Strict';
+  if (source === 'unselected') return 'No model';
   if (source === 'fallback') return 'Offline';
   if (source === 'override') return 'Manual';
   return 'Rule';
 }
 
-function buildUsageRow({ domain, mode, usedMs, baseLimitMs, effectiveLimitMs, blocked, activeSession, sessionPaused }) {
+function buildUsageRow({ domain, mode, usedMs, baseLimitMs, effectiveLimitMs, blocked, activeDomainState }) {
   const tr = document.createElement('tr');
   if (blocked) tr.classList.add('blocked');
 
@@ -143,7 +136,7 @@ function buildUsageRow({ domain, mode, usedMs, baseLimitMs, effectiveLimitMs, bl
   domainName.textContent = domain;
   domainCell.appendChild(domainName);
   if (blocked) addTag(domainCell, 'blocked-tag', 'blocked');
-  if (!blocked && activeSession?.domain === domain && sessionPaused) {
+  if (!blocked && activeDomainState?.paused) {
     addTag(domainCell, 'paused-tag', 'paused');
   }
 
@@ -255,6 +248,20 @@ async function loadStatus() {
   });
 }
 
+async function getStatusSnapshot(force = false) {
+  if (force || Date.now() - statusCheckedAt > 10000) {
+    statusSnapshot = (await loadStatus()) ?? { domains: [], activity: [] };
+    statusCheckedAt = Date.now();
+  }
+  return statusSnapshot;
+}
+
+async function refreshStatusSnapshot() {
+  statusSnapshot = (await loadStatus()) ?? { domains: [], activity: [] };
+  statusCheckedAt = Date.now();
+  return statusSnapshot;
+}
+
 async function clearClassificationCache() {
   return new Promise(resolve => {
     chrome.runtime.sendMessage({ type: MSG.CLEAR_CACHE }, response => {
@@ -301,19 +308,32 @@ async function saveConfig(config) {
 async function render() {
   // Skip rebuild if the user is editing row controls to avoid resetting focus.
   if (document.activeElement?.classList.contains('limit-input') ||
-      document.activeElement?.classList.contains('mode-select')) return;
+      document.activeElement?.classList.contains('mode-select') ||
+      document.activeElement?.id === 'model-select') return;
 
   const config = await getConfig();
-  const [status, models, ollama, sessionData] = await Promise.all([
-    loadStatus(),
-    getInstalledModels(),
-    getOllamaStatus(config.ollamaModel),
-    chrome.storage.session.get('activeSession'),
+  const [status, ollama, sessionData] = await Promise.all([
+    getStatusSnapshot(),
+    getOllamaState(config.ollamaModel),
+    chrome.storage.session.get('activeSessions'),
   ]);
 
-  const activeSession = sessionData.activeSession ?? null;
-  const sessionPaused = activeSession?.paused ?? false;
-  const liveElapsedMs = (activeSession && !sessionPaused) ? Date.now() - activeSession.startTs : 0;
+  const activeSessions = sessionData.activeSessions ?? [];
+  const domainState = new Map();
+  const activityElapsed = new Map();
+
+  for (const session of activeSessions) {
+    const elapsed = session.paused ? 0 : Math.max(0, Date.now() - session.startTs);
+    const state = domainState.get(session.domain) ?? { liveElapsedMs: 0, pausedCount: 0, totalCount: 0 };
+    state.liveElapsedMs += elapsed;
+    state.totalCount += 1;
+    if (session.paused) state.pausedCount += 1;
+    domainState.set(session.domain, state);
+
+    if (elapsed > 0 && session.activityId) {
+      activityElapsed.set(session.activityId, (activityElapsed.get(session.activityId) ?? 0) + elapsed);
+    }
+  }
 
   // Status badge
   const badge = document.getElementById('status-badge');
@@ -322,7 +342,7 @@ async function render() {
   badge.className = `badge ${badgeState}`;
   badge.title = ollamaStatusTitle(ollama);
 
-  renderModelOptions(config.ollamaModel, models);
+  renderModelOptions(config.ollamaModel, ollama.models ?? []);
 
   // Usage table
   const tbody = document.getElementById('usage-body');
@@ -348,8 +368,8 @@ async function render() {
       const baseLimitMs = (domainConfig.limitMinutes ?? config.defaultLimitMinutes) * 60000;
       const effectiveLimitMs = stat?.effectiveLimitMs ?? stat?.limitMs ?? baseLimitMs;
       const storedMs = stat?.usedMs ?? 0;
-      // Add live elapsed for the domain currently being tracked.
-      const usedMs = storedMs + (activeSession?.domain === domain ? liveElapsedMs : 0);
+      const activeDomainState = domainState.get(domain) ?? null;
+      const usedMs = storedMs + (activeDomainState?.liveElapsedMs ?? 0);
       const blocked = stat?.blocked ?? false;
 
       tbody.appendChild(buildUsageRow({
@@ -359,8 +379,9 @@ async function render() {
         baseLimitMs,
         effectiveLimitMs,
         blocked,
-        activeSession,
-        sessionPaused,
+        activeDomainState: activeDomainState
+          ? { paused: activeDomainState.totalCount > 0 && activeDomainState.pausedCount === activeDomainState.totalCount }
+          : null,
       }));
     }
   }
@@ -376,6 +397,7 @@ async function render() {
       await saveConfig(cfg);
       // Raising the limit may lift a block — let the SW reconcile.
       chrome.runtime.sendMessage({ type: MSG.RECONCILE }).catch(() => {});
+      await refreshStatusSnapshot();
     }
     input.addEventListener('change', saveLimit);
     input.addEventListener('keydown', e => { if (e.key === 'Enter') { input.blur(); saveLimit(); } });
@@ -389,6 +411,7 @@ async function render() {
       cfg.domains[domain] = { ...cfg.domains[domain], mode: select.value };
       await saveConfig(cfg);
       chrome.runtime.sendMessage({ type: MSG.RECONCILE }).catch(() => {});
+      await refreshStatusSnapshot();
       await render();
     });
   });
@@ -401,12 +424,14 @@ async function render() {
       delete cfg.domains[domain];
       await saveConfig(cfg);
       await removeDomainData(domain);
+      await refreshStatusSnapshot();
       await render();
     });
   });
 
   const activityForDisplay = activity.map(entry => {
-    if (entry.id === activeSession?.activityId && entry.verdict === 'entertainment') {
+    const liveElapsedMs = activityElapsed.get(entry.id) ?? 0;
+    if (entry.verdict === 'entertainment' && liveElapsedMs > 0) {
       return { ...entry, countedMs: (entry.countedMs ?? 0) + liveElapsedMs };
     }
     return entry;
@@ -433,6 +458,7 @@ async function render() {
     btn.addEventListener('click', async () => {
       btn.disabled = true;
       await setActivityOverride(btn.dataset.activityId, btn.dataset.verdict);
+      await refreshStatusSnapshot();
       await render();
     });
   });
@@ -464,6 +490,7 @@ async function addDomain() {
   domainInput.value = '';
   modeInput.value = BLOCK_MODE.SMART;
   minsInput.value = String(DEFAULT_LIMIT_MINUTES);
+  await refreshStatusSnapshot();
   await render();
 }
 
@@ -473,10 +500,7 @@ document.getElementById('refresh-ollama').addEventListener('click', async () => 
   const btn = document.getElementById('refresh-ollama');
   btn.disabled = true;
   const config = await getConfig();
-  await Promise.all([
-    refreshInstalledModels(),
-    refreshOllamaStatus(config.ollamaModel),
-  ]);
+  await refreshOllamaState(config.ollamaModel);
   await render();
   btn.disabled = false;
 });
@@ -487,7 +511,7 @@ document.getElementById('model-select').addEventListener('change', async (event)
   const config = await getConfig();
   config.ollamaModel = model;
   await saveConfig(config);
-  await refreshOllamaStatus(model);
+  await refreshOllamaState(model);
   await render();
 });
 

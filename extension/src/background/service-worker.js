@@ -5,12 +5,12 @@ import { VERDICT } from './rules.js';
 import {
   onVerdictChanged, onWindowBlurred,
   flushElapsed, setLimitReachedCallback, getDomainStatus,
-  pauseSession, resumeSession,
+  pauseSession, resumeSession, stopSessionByTab, stopSessionsByWindow, stopSessionsByDomain,
 } from './timer.js';
 import { enforceBlock, isDomainBlocked, unblockDomain } from './blocker.js';
 import {
   isOverLimit, getTodayDomains, getTodayActivity, getSession,
-  setCurrentTab, setActiveSession, getConfig, recordActivity,
+  setCurrentTab, getConfig, recordActivity,
   clearCache, clearTodayDomainData, applyActivityOverride,
 } from './storage.js';
 import { initAlarms, checkMissedReset, performReset, ALARM_POLL, ALARM_MIDNIGHT } from './alarms.js';
@@ -79,12 +79,8 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 });
 
 chrome.tabs.onRemoved.addListener(async (tabId) => {
-  const { currentTab, activeSession } = await getSession();
-  if (activeSession?.tabId === tabId) {
-    chrome.alarms.clear(`block_${activeSession.domain}`);
-    await flushElapsed();
-    await setActiveSession(null);
-  }
+  const { currentTab } = await getSession();
+  await stopSessionByTab(tabId);
   if (currentTab?.tabId === tabId) {
     await setCurrentTab(null);
   }
@@ -108,10 +104,6 @@ chrome.windows.onFocusChanged.addListener(async (windowId) => {
 // --- Content script messages ---
 
 chrome.runtime.onMessage.addListener((msg, sender, respond) => {
-  if (msg.type === MSG.TAB_INFO) {
-    handleTabInfo(msg, sender.tab).catch(console.error);
-    return false;
-  }
   if (msg.type === MSG.GET_STATUS) {
     buildStatusResponse().then(respond).catch(() => respond({}));
     return true; // async
@@ -162,9 +154,11 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
 chrome.alarms.onAlarm.addListener(async ({ name }) => {
   if (name === ALARM_POLL) {
     await flushElapsed();
-    // Re-classify the active tab (catches SPA navigation / verdict drift)
-    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-    if (tab) await handleTabFocus(tab.id, tab.windowId);
+    // Re-classify active tabs in every window to keep multi-window sessions in sync.
+    const tabs = await chrome.tabs.query({ active: true });
+    for (const tab of tabs) {
+      await handleTabFocus(tab.id, tab.windowId);
+    }
   }
   if (name === ALARM_MIDNIGHT) {
     await performReset();
@@ -190,12 +184,7 @@ async function handleTabFocus(tabId, windowId) {
     // Non-trackable page. Only stop the session if it's in the SAME window as
     // the entertainment tab (user switched tabs within that window). Entertainment
     // in another window keeps running.
-    const { activeSession } = await getSession();
-    if (activeSession?.windowId === tab.windowId) {
-      chrome.alarms.clear(`block_${activeSession.domain}`);
-      await flushElapsed();
-      await setActiveSession(null);
-    }
+    await stopSessionsByWindow(tab.windowId);
     return;
   }
 
@@ -220,17 +209,6 @@ async function handleTabFocus(tabId, windowId) {
   } catch { /* content script not ready yet; use tab metadata */ }
 
   await processTabInfo(tabId, windowId, domain, info);
-}
-
-async function handleTabInfo(msg, tab) {
-  if (!tab) return;
-  const domain = extractDomain(msg.url);
-  if (!domain) return;
-
-  const blocked = await isDomainBlocked(domain);
-  if (blocked) return;
-
-  await processTabInfo(tab.id, tab.windowId, domain, msg);
 }
 
 async function processTabInfo(tabId, windowId, domain, { url, title, snippet, videoPlaying }) {
@@ -270,7 +248,7 @@ async function processTabInfo(tabId, windowId, domain, { url, title, snippet, vi
     // while swapping player elements.
     if (mode !== BLOCK_MODE.STRICT && videoPlaying === false) {
       const stillPaused = await confirmNoVideoPlaying(tabId);
-      if (stillPaused) await pauseSession();
+      if (stillPaused) await pauseSession(tabId, windowId);
     }
 
     // Re-check limit (may have crossed while classifying).
@@ -282,17 +260,20 @@ async function processTabInfo(tabId, windowId, domain, { url, title, snippet, vi
 async function handleVideoState(tab, playing) {
   if (!tab?.id) return;
 
-  const { activeSession } = await getSession();
-  if (!activeSession || activeSession.tabId !== tab.id || activeSession.windowId !== tab.windowId) {
+  const { activeSessions } = await getSession();
+  const activeSession = activeSessions.find(
+    session => session.tabId === tab.id && session.windowId === tab.windowId
+  );
+  if (!activeSession) {
     return;
   }
   if (activeSession.mode === BLOCK_MODE.STRICT) return;
 
   if (playing) {
-    await resumeSession();
+    await resumeSession(tab.id, tab.windowId);
   } else {
     const stillPaused = await confirmNoVideoPlaying(tab.id);
-    if (stillPaused) await pauseSession();
+    if (stillPaused) await pauseSession(tab.id, tab.windowId);
   }
 
 }
@@ -315,10 +296,12 @@ async function buildStatusResponse() {
 
 async function handleOverride({ id, verdict }) {
   if (!['productive', 'entertainment'].includes(verdict)) return null;
-  const { activeSession } = await getSession();
-  if (verdict === VERDICT.PRODUCTIVE && activeSession?.activityId === id) {
-    chrome.alarms.clear(`block_${activeSession.domain}`);
-    await setActiveSession(null);
+  const { activeSessions } = await getSession();
+  if (verdict === VERDICT.PRODUCTIVE) {
+    const matchingSession = activeSessions.find(session => session.activityId === id);
+    if (matchingSession) {
+      await stopSessionByTab(matchingSession.tabId);
+    }
   }
 
   const entry = await applyActivityOverride({ id, verdict });
@@ -335,11 +318,8 @@ async function handleOverride({ id, verdict }) {
 
 async function removeDomainData(domain) {
   if (!domain) return;
-  const { activeSession, currentTab } = await getSession();
-  if (activeSession?.domain === domain) {
-    chrome.alarms.clear(`block_${domain}`);
-    await setActiveSession(null);
-  }
+  const { currentTab } = await getSession();
+  await stopSessionsByDomain(domain);
   if (currentTab?.domain === domain) {
     await setCurrentTab(null);
   }

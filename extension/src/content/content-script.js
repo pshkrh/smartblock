@@ -61,7 +61,6 @@
 
   function buildInfo() {
     return {
-      type: 'TAB_INFO',
       url: location.href,
       title: document.title,
       snippet: extractSnippet(),
@@ -76,17 +75,6 @@
     }
   });
 
-  // Push TAB_INFO proactively on load.
-  chrome.runtime.sendMessage(buildInfo()).catch(() => {});
-
-  document.addEventListener('visibilitychange', () => {
-    chrome.runtime.sendMessage(buildInfo()).catch(() => {});
-  });
-
-  window.addEventListener('focus', () => {
-    chrome.runtime.sendMessage(buildInfo()).catch(() => {});
-  });
-
   // --- Video play/pause detection ---
 
   const attachedVideos = new WeakSet();
@@ -97,11 +85,9 @@
 
     video.addEventListener('play', () => {
       chrome.runtime.sendMessage({ type: 'VIDEO_PLAYING' }).catch(() => {});
-      chrome.runtime.sendMessage(buildInfo()).catch(() => {});
     });
     video.addEventListener('pause', () => {
       chrome.runtime.sendMessage({ type: 'VIDEO_PAUSED' }).catch(() => {});
-      chrome.runtime.sendMessage(buildInfo()).catch(() => {});
     });
   }
 
@@ -122,7 +108,6 @@
   function onTitleChange() {
     if (document.title !== currentTitle) {
       currentTitle = document.title;
-      chrome.runtime.sendMessage(buildInfo()).catch(() => {});
     }
   }
 

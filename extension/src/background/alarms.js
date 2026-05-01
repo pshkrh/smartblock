@@ -1,7 +1,7 @@
 import { POLL_INTERVAL_MINUTES } from '../shared/config.js';
 import { localDateKey } from '../shared/date.js';
 import { flushElapsed } from './timer.js';
-import { resetToday, pruneCache, getLastResetDay, setLastResetDay } from './storage.js';
+import { resetToday, pruneCache, pruneHistory, getLastResetDay, setLastResetDay } from './storage.js';
 import { unblockAll } from './blocker.js';
 
 export const ALARM_POLL = 'poll';
@@ -34,12 +34,15 @@ export async function checkMissedReset() {
   if (lastReset && lastReset !== today) {
     await performReset();
   }
+  await pruneHistory();
+  await pruneCache();
 }
 
 export async function performReset() {
   await flushElapsed();
   await resetToday();
   await unblockAll();
+  await pruneHistory();
   await pruneCache();
   scheduleMidnight(); // reschedule for next midnight
 }

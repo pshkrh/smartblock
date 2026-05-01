@@ -8,9 +8,7 @@
     "tabs",
     "alarms",
     "declarativeNetRequest",
-    "declarativeNetRequestWithHostAccess",
-    "webNavigation",
-    "scripting"
+    "declarativeNetRequestWithHostAccess"
   ],
   "host_permissions": [
     "http://localhost:11434/*",

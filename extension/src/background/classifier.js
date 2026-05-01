@@ -50,11 +50,12 @@ async function callOllama(url, title, snippet, model) {
  *   'rule'     - matched a domain, URL, keyword, or default rule
  *   'cache'    - returned from local cache
  *   'ollama'   - returned from Ollama
+ *   'unselected' - no Ollama model selected
  *   'fallback' - Ollama unavailable; defaulting to productive
  */
 export async function classify(domain, url, title, snippet, options = {}) {
   const model = typeof options.ollamaModel === 'string' ? options.ollamaModel.trim() : '';
-  const override = await getOverride(domain, url, title);
+  const override = await getOverride(domain, url);
   if (override) return { verdict: override, source: 'override' };
 
   // Rule pre-pass (handles HARD lists, unknown domains, and curated fast-paths)
@@ -64,17 +65,17 @@ export async function classify(domain, url, title, snippet, options = {}) {
   }
 
   // Cache lookup for pages that need model classification.
-  const cached = await getCached(domain, url, title, model);
+  const cached = await getCached(domain, url, model);
   if (cached) return { verdict: cached, source: 'cache' };
 
   if (!model) {
-    return { verdict: VERDICT.PRODUCTIVE, source: 'fallback' };
+    return { verdict: VERDICT.PRODUCTIVE, source: 'unselected' };
   }
 
   // Ollama
   const ollamaVerdict = await callOllama(url, title, snippet, model);
   if (ollamaVerdict) {
-    await setCached(domain, url, title, model, ollamaVerdict);
+    await setCached(domain, url, model, ollamaVerdict);
     return { verdict: ollamaVerdict, source: 'ollama' };
   }
 

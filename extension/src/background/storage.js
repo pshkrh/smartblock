@@ -1,6 +1,8 @@
 import { ACTIVITY_LIMIT, BLOCK_MODE, CACHE_TTL_MS, defaultConfig } from '../shared/config.js';
 import { localDateKey } from '../shared/date.js';
 
+const HISTORY_RETENTION_DAYS = 14;
+
 // --- Config ---
 
 function normalizeDomainConfig(domainConfig, fallbackLimitMinutes) {
@@ -52,6 +54,20 @@ function usageKey(domain, day = localDateKey()) {
   return `usage_${day}_${domain}`;
 }
 
+function normalizeIdentityUrl(url) {
+  try {
+    const parsed = new URL(url);
+    parsed.hash = '';
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
+function pageIdentity(domain, url) {
+  return `${domain}\x1f${normalizeIdentityUrl(url)}`;
+}
+
 export async function getUsage(domain, day = localDateKey()) {
   const key = usageKey(domain, day);
   const result = await chrome.storage.local.get(key);
@@ -98,14 +114,14 @@ export async function clearTodayDomainData(domain) {
 
 // --- Classification cache ---
 
-async function cacheKey(domain, url, title, model) {
-  const raw = new TextEncoder().encode(domain + '\x1f' + url + '\x1f' + title + '\x1f' + model);
+async function cacheKey(domain, url, model) {
+  const raw = new TextEncoder().encode(pageIdentity(domain, url) + '\x1f' + model);
   const buf = await crypto.subtle.digest('SHA-256', raw);
   return 'cache_' + Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-export async function getCached(domain, url, title, model) {
-  const key = await cacheKey(domain, url, title, model);
+export async function getCached(domain, url, model) {
+  const key = await cacheKey(domain, url, model);
   const result = await chrome.storage.local.get(key);
   const entry = result[key];
   if (!entry) return null;
@@ -113,16 +129,27 @@ export async function getCached(domain, url, title, model) {
   return entry.verdict;
 }
 
-export async function setCached(domain, url, title, model, verdict) {
-  const key = await cacheKey(domain, url, title, model);
+export async function setCached(domain, url, model, verdict) {
+  const key = await cacheKey(domain, url, model);
   await chrome.storage.local.set({ [key]: { verdict, ts: Date.now() } });
 }
 
 // --- Session (survives SW restarts, clears on browser close) ---
 
 export async function getSession() {
-  const { currentTab, activeSession } = await chrome.storage.session.get(['currentTab', 'activeSession']);
-  return { currentTab: currentTab ?? null, activeSession: activeSession ?? null };
+  const { currentTab, activeSession, activeSessions } = await chrome.storage.session.get([
+    'currentTab',
+    'activeSession',
+    'activeSessions',
+  ]);
+  const sessions = Array.isArray(activeSessions)
+    ? activeSessions
+    : (activeSession ? [activeSession] : []);
+  return {
+    currentTab: currentTab ?? null,
+    activeSession: sessions[0] ?? null,
+    activeSessions: sessions,
+  };
 }
 
 export async function setCurrentTab(tabData) {
@@ -130,7 +157,18 @@ export async function setCurrentTab(tabData) {
 }
 
 export async function setActiveSession(sessionData) {
-  await chrome.storage.session.set({ activeSession: sessionData });
+  await chrome.storage.session.set({
+    activeSession: sessionData,
+    activeSessions: sessionData ? [sessionData] : [],
+  });
+}
+
+export async function setActiveSessions(sessionData) {
+  const sessions = Array.isArray(sessionData) ? sessionData : [];
+  await chrome.storage.session.set({
+    activeSession: sessions[0] ?? null,
+    activeSessions: sessions,
+  });
 }
 
 // --- Reset ---
@@ -162,6 +200,31 @@ export async function pruneCache() {
   if (stale.length) await chrome.storage.local.remove(stale);
 }
 
+export async function pruneHistory() {
+  const all = await chrome.storage.local.get(null);
+  const cutoff = Date.now() - (HISTORY_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+  const staleKeys = [];
+
+  for (const [key, value] of Object.entries(all)) {
+    if (key.startsWith('activity_')) {
+      const entries = Array.isArray(value) ? value : [];
+      const kept = entries.filter(entry => (entry.lastSeenTs ?? entry.firstSeenTs ?? 0) >= cutoff);
+      if (kept.length === 0) {
+        staleKeys.push(key);
+      } else if (kept.length !== entries.length) {
+        await chrome.storage.local.set({ [key]: kept.map(normalizeActivityEntry) });
+      }
+      continue;
+    }
+
+    if (key.startsWith('override_')) {
+      if ((value?.ts ?? 0) < cutoff) staleKeys.push(key);
+    }
+  }
+
+  if (staleKeys.length) await chrome.storage.local.remove(staleKeys);
+}
+
 export async function clearCache() {
   const all = await chrome.storage.local.get(null);
   const keys = Object.keys(all).filter(k => k.startsWith('cache_'));
@@ -171,21 +234,29 @@ export async function clearCache() {
 
 // --- Manual classification overrides ---
 
-async function overrideKey(domain, url, title) {
-  const raw = new TextEncoder().encode(domain + '\x1f' + url + '\x1f' + title);
+async function overrideKey(domain, url) {
+  const raw = new TextEncoder().encode(pageIdentity(domain, url));
   const buf = await crypto.subtle.digest('SHA-256', raw);
   return 'override_' + Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-export async function getOverride(domain, url, title) {
-  const key = await overrideKey(domain, url, title);
+export async function getOverride(domain, url) {
+  const key = await overrideKey(domain, url);
   const result = await chrome.storage.local.get(key);
   return result[key]?.verdict ?? null;
 }
 
 export async function setOverride({ domain, url, title, verdict }) {
-  const key = await overrideKey(domain, url, title);
-  await chrome.storage.local.set({ [key]: { domain, url, title, verdict, ts: Date.now() } });
+  const key = await overrideKey(domain, url);
+  await chrome.storage.local.set({
+    [key]: {
+      domain,
+      url: normalizeIdentityUrl(url),
+      title,
+      verdict,
+      ts: Date.now(),
+    },
+  });
 }
 
 // --- Activity log ---
@@ -223,25 +294,25 @@ export async function getTodayActivity() {
 
 export async function recordActivity({ domain, url, title, verdict, source, mode }) {
   const now = Date.now();
-  const id = await hashKey('activity_', `${localDateKey()}\x1f${domain}\x1f${url}\x1f${title}`);
+  const normalizedUrl = normalizeIdentityUrl(url);
+  const id = await hashKey('activity_', `${localDateKey()}\x1f${pageIdentity(domain, normalizedUrl)}`);
   const key = activityKey();
   const result = await chrome.storage.local.get(key);
   const entries = result[key] ?? [];
   const existing = entries.find(entry => entry.id === id);
 
   if (existing) {
-    const wasCounted = existing.verdict === 'entertainment';
-    const isCounted = verdict === 'entertainment';
+    existing.url = normalizedUrl;
+    existing.title = title || existing.title || domain;
     existing.verdict = verdict;
     existing.source = source;
     existing.mode = mode;
-    if (wasCounted && !isCounted) existing.countedMs = 0;
     existing.lastSeenTs = now;
   } else {
     entries.unshift({
       id,
       domain,
-      url,
+      url: normalizedUrl,
       title: title || domain,
       verdict,
       source,
@@ -281,11 +352,8 @@ export async function applyActivityOverride({ id, verdict }) {
   const entry = entries.find(item => item.id === id);
   if (!entry) return null;
 
-  const wasCounted = entry.verdict === 'entertainment';
-  const isCounted = verdict === 'entertainment';
   entry.verdict = verdict;
   entry.source = 'override';
-  if (wasCounted && !isCounted) entry.countedMs = 0;
   entry.lastSeenTs = Date.now();
 
   await setOverride({

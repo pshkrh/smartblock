@@ -22,7 +22,7 @@ export async function listInstalledModels() {
   return result.models;
 }
 
-export async function getOllamaStatus(model = '') {
+export async function getOllamaState(model = '') {
   const targetModel = typeof model === 'string' ? model.trim() : '';
   const result = await fetchTags();
   if (!targetModel) {
@@ -44,7 +44,17 @@ export async function getOllamaStatus(model = '') {
   };
 }
 
+export async function getOllamaStatus(model = '') {
+  const state = await getOllamaState(model);
+  return {
+    ok: state.ok,
+    reason: state.reason,
+    model: state.model,
+    models: state.models,
+  };
+}
+
 export async function checkOllamaReachable(model = '') {
-  const status = await getOllamaStatus(model);
-  return status.ok;
+  const state = await getOllamaState(model);
+  return state.ok;
 }
