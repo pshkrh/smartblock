@@ -1,5 +1,3 @@
-import { DEFAULT_OLLAMA_MODEL } from './config.js';
-
 async function fetchTags() {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 2000);
@@ -24,9 +22,17 @@ export async function listInstalledModels() {
   return result.models;
 }
 
-export async function getOllamaStatus(model = DEFAULT_OLLAMA_MODEL) {
-  const targetModel = model || DEFAULT_OLLAMA_MODEL;
+export async function getOllamaStatus(model = '') {
+  const targetModel = typeof model === 'string' ? model.trim() : '';
   const result = await fetchTags();
+  if (!targetModel) {
+    return {
+      ok: false,
+      reason: 'unselected',
+      model: '',
+      models: result.models,
+    };
+  }
   if (!result.ok) return { ok: false, reason: 'offline', model: targetModel, models: [] };
 
   const hasModel = result.models.includes(targetModel);
@@ -38,7 +44,7 @@ export async function getOllamaStatus(model = DEFAULT_OLLAMA_MODEL) {
   };
 }
 
-export async function checkOllamaReachable(model = DEFAULT_OLLAMA_MODEL) {
+export async function checkOllamaReachable(model = '') {
   const status = await getOllamaStatus(model);
   return status.ok;
 }

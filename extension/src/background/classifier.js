@@ -1,4 +1,4 @@
-import { OLLAMA_URL, DEFAULT_OLLAMA_MODEL, OLLAMA_TIMEOUT_MS } from '../shared/config.js';
+import { OLLAMA_URL, OLLAMA_TIMEOUT_MS } from '../shared/config.js';
 import { ruleClassify, VERDICT } from './rules.js';
 import { getCached, getOverride, setCached } from './storage.js';
 
@@ -53,7 +53,7 @@ async function callOllama(url, title, snippet, model) {
  *   'fallback' - Ollama unavailable; defaulting to productive
  */
 export async function classify(domain, url, title, snippet, options = {}) {
-  const model = options.ollamaModel || DEFAULT_OLLAMA_MODEL;
+  const model = typeof options.ollamaModel === 'string' ? options.ollamaModel.trim() : '';
   const override = await getOverride(domain, url, title);
   if (override) return { verdict: override, source: 'override' };
 
@@ -66,6 +66,10 @@ export async function classify(domain, url, title, snippet, options = {}) {
   // Cache lookup for pages that need model classification.
   const cached = await getCached(domain, url, title, model);
   if (cached) return { verdict: cached, source: 'cache' };
+
+  if (!model) {
+    return { verdict: VERDICT.PRODUCTIVE, source: 'fallback' };
+  }
 
   // Ollama
   const ollamaVerdict = await callOllama(url, title, snippet, model);

@@ -12,12 +12,6 @@
   Chrome MV3 extension • Local Ollama classification • Smart and Strict blocking modes
 </p>
 
-<p align="center">
-  <img alt="Chrome MV3" src="https://img.shields.io/badge/Chrome-MV3-1f6feb?style=flat-square">
-  <img alt="Local model" src="https://img.shields.io/badge/Ollama-Local-0f766e?style=flat-square">
-  <img alt="Model" src="https://img.shields.io/badge/Default%20model-qwen2.5%3A3b-b45309?style=flat-square">
-</p>
-
 SmartBlock is a Chrome extension for time blocking mixed-use websites with a local Ollama model. Instead of treating an entire domain as distracting, it classifies the specific page you are on and only counts the pages that look like entertainment.
 
 | Mode | Behavior |
@@ -38,10 +32,11 @@ SmartBlock is a Chrome extension for time blocking mixed-use websites with a loc
 - SmartBlock only tracks domains you explicitly add in the popup.
 - SmartBlock currently maintains a single active counting session at a time.
 - If two distracting tabs are open on different monitors, the extension does not yet count both simultaneously.
-- Ollama status in the popup shows the configured model name:
-  - `Ollama: qwen2.5:3b`
-  - `Missing: qwen2.5:3b`
-  - `Ollama offline`
+- Ollama status in the popup is tied to the selected model:
+  - `?` no model selected yet
+  - `✓` available in Ollama
+  - `!` selected model not installed
+  - `×` Ollama offline
 
 ## How Classification Works
 
@@ -59,30 +54,52 @@ The built-in rule pass keeps some sites deterministic:
 - `HARD_PRODUCTIVE`: never counted on Smart domains
 - `MIXED`: curated fast paths before Ollama
 
-## Setup
+## Install
 
-### 1. Install Ollama and the model
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/pshkrh/smartblock.git
+cd smartblock
+```
+
+### 2. Install Ollama and at least one model
 
 ```bash
 brew install ollama
-ollama pull qwen2.5:3b
+ollama pull qwen2.5:7b
 ```
 
-### 2. Start Ollama with extension access enabled
+You can pick the active model from the popup header after Ollama is running.
+
+### 3. Start Ollama with extension access enabled
 
 ```bash
-OLLAMA_ORIGINS="*" ollama serve
+OLLAMA_ORIGINS="chrome-extension://*" ollama serve
 ```
 
-If you prefer the macOS app, launch it with that environment available in the session so Chrome extension requests are allowed.
+If you prefer the macOS app, set the environment first and then launch it:
 
-### 3. Load the extension
+```bash
+launchctl setenv OLLAMA_ORIGINS "chrome-extension://*"
+open -a Ollama
+```
+
+### 4. Load the extension in Chrome
 
 1. Open `chrome://extensions`
 2. Enable `Developer mode`
 3. Click `Load unpacked`
-4. Select the `extension/` folder
+4. Select `/path/to/smartblock/extension`
 5. Pin SmartBlock to the toolbar
+
+### 5. Choose a model and add your first site
+
+1. Open the SmartBlock popup
+2. Pick an Ollama model from the `Model` dropdown in the header
+3. Add a domain such as `youtube.com`
+4. Choose `Smart` or `Strict`
+5. Set a daily limit in minutes
 
 ## Using It
 
@@ -144,14 +161,18 @@ Reload the extension after changing the rules.
 
 **Popup says `Ollama offline`**
 
-Make sure Ollama is running and started with `OLLAMA_ORIGINS="*"`.
+Make sure Ollama is running and started with `OLLAMA_ORIGINS="chrome-extension://*"`.
 
-**Popup says `Missing: qwen2.5:3b`**
+**Popup shows `?`**
 
-Install the configured model:
+Pick a model from the `Model` dropdown in the popup header.
+
+**Popup shows `!` for the selected model**
+
+Install the model you want to use, then refresh the popup:
 
 ```bash
-ollama pull qwen2.5:3b
+ollama pull qwen2.5:7b
 ```
 
 **A page is classified incorrectly**

@@ -19,8 +19,8 @@ function normalizeConfig(config) {
   const defaultLimitMinutes = Number.isFinite(source.defaultLimitMinutes)
     ? source.defaultLimitMinutes
     : defaults.defaultLimitMinutes;
-  const ollamaModel = typeof source.ollamaModel === 'string' && source.ollamaModel
-    ? source.ollamaModel
+  const ollamaModel = typeof source.ollamaModel === 'string'
+    ? source.ollamaModel.trim()
     : defaults.ollamaModel;
   const domains = {};
 
