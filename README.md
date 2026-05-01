@@ -1,103 +1,163 @@
 # SmartBlock
 
-Smart website blocking that only counts distracting time.
+<p align="center">
+  <img src="./extension/icons/icon128.png" alt="SmartBlock logo" width="128" height="128">
+</p>
 
-SmartBlock uses a local LLM to distinguish productive from entertainment use on sites you configure (e.g. a YouTube tutorial vs. a vlog, or a serious article vs. casual browsing). Productive pages never tick the clock.
+<p align="center">
+  <strong>Smart website blocking that only counts distracting time.</strong>
+</p>
 
-## How it works
+<p align="center">
+  Chrome MV3 extension • Local Ollama classification • Smart and Strict blocking modes
+</p>
 
-- **Chrome extension (MV3)** tracks the active tab, classifies each page, and blocks domains when the daily entertainment budget is exhausted.
-- **Ollama** (running locally) powers the LLM classifier. No cloud, no API keys.
-- **Smart limits** classify page context and only count distracting pages.
-- **Strict limits** count all active time on the domain without classification.
-- A rule-based pre-pass handles common domains instantly without hitting the model:
-  - TikTok, Instagram, X, Netflix, Reddit, etc. → always entertainment
-  - GitHub, MDN, Wikipedia, Coursera, etc. → always productive
-  - YouTube, LinkedIn, Twitch, Medium, Substack → curated fast paths before Ollama
+<p align="center">
+  <img alt="Chrome MV3" src="https://img.shields.io/badge/Chrome-MV3-1f6feb?style=flat-square">
+  <img alt="Local model" src="https://img.shields.io/badge/Ollama-Local-0f766e?style=flat-square">
+  <img alt="Model" src="https://img.shields.io/badge/Default%20model-qwen2.5%3A3b-b45309?style=flat-square">
+</p>
+
+SmartBlock is a Chrome extension for time blocking mixed-use websites with a local Ollama model. Instead of treating an entire domain as distracting, it classifies the specific page you are on and only counts the pages that look like entertainment.
+
+| Mode | Behavior |
+| --- | --- |
+| `Smart` | Classifies the page and only counts distracting time |
+| `Strict` | Counts all active time on the domain |
+
+## What It Does
+
+- Tracks configured domains in `Smart` or `Strict` mode.
+- Uses a local Ollama model for page classification.
+- Uses manual overrides, fast rules, and cache before making a fresh model call.
+- Redirects over-limit domains to a block page.
+- Shows an Activity view with counted vs ignored pages, source labels, overrides, and cache clearing.
+
+## Current Behavior
+
+- SmartBlock only tracks domains you explicitly add in the popup.
+- SmartBlock currently maintains a single active counting session at a time.
+- If two distracting tabs are open on different monitors, the extension does not yet count both simultaneously.
+- Ollama status in the popup shows the configured model name:
+  - `Ollama: qwen2.5:3b`
+  - `Missing: qwen2.5:3b`
+  - `Ollama offline`
+
+## How Classification Works
+
+For Smart domains, SmartBlock evaluates a page in this order:
+
+1. Manual override from the Activity tab
+2. Fast local rules
+3. Cached classification
+4. Ollama classification
+5. Fail-open fallback to productive if Ollama is unavailable
+
+The built-in rule pass keeps some sites deterministic:
+
+- `HARD_ENTERTAINMENT`: always counted on Smart domains
+- `HARD_PRODUCTIVE`: never counted on Smart domains
+- `MIXED`: curated fast paths before Ollama
 
 ## Setup
 
-### 1. Install and start Ollama
+### 1. Install Ollama and the model
 
 ```bash
-# Install from https://ollama.com
 brew install ollama
-
-# Allow requests from the Chrome extension
-OLLAMA_ORIGINS="*" ollama serve
-```
-
-Open a second terminal:
-
-```bash
 ollama pull qwen2.5:3b
 ```
 
-### 2. Load the extension
+### 2. Start Ollama with extension access enabled
+
+```bash
+OLLAMA_ORIGINS="*" ollama serve
+```
+
+If you prefer the macOS app, launch it with that environment available in the session so Chrome extension requests are allowed.
+
+### 3. Load the extension
 
 1. Open `chrome://extensions`
-2. Enable **Developer mode** (top right)
-3. Click **Load unpacked** → select the `extension/` folder
-4. Pin the SmartBlock icon to your toolbar
+2. Enable `Developer mode`
+3. Click `Load unpacked`
+4. Select the `extension/` folder
+5. Pin SmartBlock to the toolbar
 
-### 3. Set your limits
+## Using It
 
-Click the extension icon → type a domain (e.g. `youtube.com`) → choose **Smart** or **Strict** → set a daily minute limit → **Add**.
+1. Open the popup
+2. Add a domain such as `youtube.com`
+3. Choose `Smart` or `Strict`
+4. Set a daily limit in minutes
 
-## Usage
+In the Activity tab, you can inspect what counted, what did not, and override bad model decisions.
 
-| Situation | What happens |
-|---|---|
-| Smart domain, distracting page | Timer ticks |
-| Smart domain, productive page | Timer pauses |
-| Strict domain | Timer ticks for all active time |
-| Ambiguous Smart page | Ollama classifies it; result cached for 7 days |
-| Limit reached | Redirected to block page |
-| Block page | Increase the site's limit from the popup to continue |
-| Ollama is offline | Timer pauses (fail-open); popup shows "Ollama offline" |
-| Activity tab | Shows counted and ignored pages with classifier source |
-| Browser restarts | Today's usage and config are preserved |
-| Midnight | All timers reset, blocks lifted automatically |
+## Popup Overview
 
-## File structure
+- `Limits` tab:
+  - add/remove tracked domains
+  - edit mode and daily limit
+  - see live usage progress
+- `Activity` tab:
+  - recent classified pages
+  - counted vs ignored summaries
+  - manual `Count` / `Ignore` actions
+  - clear cached classifications
 
-```
+## Block Behavior
+
+When a domain hits its limit, SmartBlock redirects the tab to a block page. To continue, raise the domain limit from the popup. Removing the domain clears today's stored usage and activity for that site.
+
+## Repository Layout
+
+```text
 extension/
 ├── manifest.json
 ├── icons/
 └── src/
     ├── background/
-    │   ├── service-worker.js   # Event wiring
-    │   ├── timer.js            # Timestamp-based accumulator
-    │   ├── classifier.js       # Rules + cache + Ollama
-    │   ├── rules.js            # Domain lists & keyword patterns
-    │   ├── blocker.js          # declarativeNetRequest management
-    │   ├── storage.js          # chrome.storage helpers
-    │   └── alarms.js           # Poll + midnight reset
-    ├── shared/                 # Shared config, messages, dates, domains, DNR IDs
+    │   ├── service-worker.js
+    │   ├── timer.js
+    │   ├── classifier.js
+    │   ├── rules.js
+    │   ├── blocker.js
+    │   ├── storage.js
+    │   └── alarms.js
+    ├── shared/
     ├── content/
-    │   └── content-script.js   # URL/title/snippet extraction
-    ├── popup/                  # Extension popup
-    └── block/                  # Block page
+    ├── popup/
+    └── block/
 ```
 
-## Customising domain lists
+## Customizing Rules
 
-Edit [`extension/src/background/rules.js`](extension/src/background/rules.js) to tune curated fast paths:
+Edit [`extension/src/background/rules.js`](extension/src/background/rules.js) to tune domain behavior:
 
-- `HARD_ENTERTAINMENT` always counts on Smart domains.
-- `HARD_PRODUCTIVE` never counts on Smart domains.
-- `MIXED` gets extra URL/title fast paths before Ollama.
+- `HARD_ENTERTAINMENT`
+- `HARD_PRODUCTIVE`
+- `MIXED`
 
-Reload the extension at `chrome://extensions` after saving.
+Reload the extension after changing the rules.
 
 ## Troubleshooting
 
-**Popup shows "Ollama offline"**
-Make sure Ollama is running with `OLLAMA_ORIGINS="*" ollama serve`. The `OLLAMA_ORIGINS` flag is required — without it Chrome extension requests are blocked by CORS.
+**Popup says `Ollama offline`**
 
-**Timer isn't ticking on a site I expected**
-Make sure the domain is configured in the popup. SmartBlock only tracks configured domains. If it is configured as Smart, the page may be classified as productive; check the Activity tab for the verdict and source.
+Make sure Ollama is running and started with `OLLAMA_ORIGINS="*"`.
 
-**Block page appears on a productive site**
-The domain may be set to Strict, or it may be in `HARD_ENTERTAINMENT`. Switch the domain to Smart in the popup, or move the domain to `MIXED`/remove it from `HARD_ENTERTAINMENT` in `rules.js` for per-page classification.
+**Popup says `Missing: qwen2.5:3b`**
+
+Install the configured model:
+
+```bash
+ollama pull qwen2.5:3b
+```
+
+**A page is classified incorrectly**
+
+Use the Activity tab to mark it as `Count` or `Ignore`. Manual overrides win over cache and model output.
+
+**Deleting and re-adding a site still shows old usage**
+
+Current code clears today's stored usage when a domain is removed. Reload the extension if the popup is showing stale state after a recent code update.
