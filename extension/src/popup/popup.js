@@ -1,7 +1,6 @@
 import { MSG } from '../shared/messages.js';
-import { DEFAULT_LIMIT_MINUTES, defaultConfig } from '../shared/config.js';
+import { BLOCK_MODE, DEFAULT_LIMIT_MINUTES, defaultConfig } from '../shared/config.js';
 import { checkOllamaReachable } from '../shared/ollama.js';
-import { ruleIdForDomain } from '../shared/dnr.js';
 import { extractDomain } from '../shared/domain.js';
 
 // Cache Ollama reachability — checking every second would spam the network.
@@ -12,6 +11,12 @@ async function getOllamaStatus() {
     ollamaOk = await checkOllamaReachable();
     ollamaCheckedAt = Date.now();
   }
+  return ollamaOk;
+}
+
+async function refreshOllamaStatus() {
+  ollamaOk = await checkOllamaReachable();
+  ollamaCheckedAt = Date.now();
   return ollamaOk;
 }
 
@@ -61,7 +66,20 @@ function addTag(parent, className, text) {
   parent.appendChild(tag);
 }
 
-function buildUsageRow({ domain, usedMs, effectiveLimit, blocked, snoozed, activeSession, sessionPaused }) {
+function modeLabel(mode) {
+  return mode === BLOCK_MODE.STRICT ? 'Strict' : 'Smart';
+}
+
+function sourceLabel(source) {
+  if (source === 'ollama') return 'Ollama';
+  if (source === 'cache') return 'Cache';
+  if (source === 'strict') return 'Strict';
+  if (source === 'fallback') return 'Offline';
+  if (source === 'override') return 'Manual';
+  return 'Rule';
+}
+
+function buildUsageRow({ domain, mode, usedMs, baseLimitMs, effectiveLimitMs, blocked, activeSession, sessionPaused }) {
   const tr = document.createElement('tr');
   if (blocked) tr.classList.add('blocked');
 
@@ -72,10 +90,22 @@ function buildUsageRow({ domain, usedMs, effectiveLimit, blocked, snoozed, activ
   domainName.textContent = domain;
   domainCell.appendChild(domainName);
   if (blocked) addTag(domainCell, 'blocked-tag', 'blocked');
-  if (snoozed) addTag(domainCell, 'snoozed-tag', 'snoozed');
   if (!blocked && activeSession?.domain === domain && sessionPaused) {
     addTag(domainCell, 'paused-tag', 'paused');
   }
+
+  const modeCell = document.createElement('td');
+  const modeSelect = document.createElement('select');
+  modeSelect.className = 'mode-select';
+  modeSelect.dataset.domain = domain;
+  for (const value of Object.values(BLOCK_MODE)) {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = modeLabel(value);
+    option.selected = value === mode;
+    modeSelect.appendChild(option);
+  }
+  modeCell.appendChild(modeSelect);
 
   const usedCell = document.createElement('td');
   usedCell.className = 'used-cell';
@@ -83,7 +113,7 @@ function buildUsageRow({ domain, usedMs, effectiveLimit, blocked, snoozed, activ
   barWrap.className = 'bar-wrap';
   const bar = document.createElement('div');
   bar.className = 'bar';
-  bar.style.width = `${Math.min(100, Math.round((usedMs / effectiveLimit) * 100))}%`;
+  bar.style.width = `${Math.min(100, Math.round((usedMs / effectiveLimitMs) * 100))}%`;
   barWrap.appendChild(bar);
   const usedLabel = document.createElement('span');
   usedLabel.className = 'used-label';
@@ -98,7 +128,7 @@ function buildUsageRow({ domain, usedMs, effectiveLimit, blocked, snoozed, activ
   input.type = 'number';
   input.min = '1';
   input.max = '1440';
-  input.value = String(Math.round(effectiveLimit / 60000));
+  input.value = String(Math.round(baseLimitMs / 60000));
   input.dataset.domain = domain;
   const unit = document.createElement('span');
   unit.className = 'unit-label';
@@ -115,8 +145,52 @@ function buildUsageRow({ domain, usedMs, effectiveLimit, blocked, snoozed, activ
   removeBtn.textContent = '×';
   actionCell.appendChild(removeBtn);
 
-  tr.append(domainCell, usedCell, limitCell, actionCell);
+  tr.append(domainCell, modeCell, usedCell, limitCell, actionCell);
   return tr;
+}
+
+function buildActivityRow(entry) {
+  const item = document.createElement('article');
+  item.className = 'activity-item';
+  if (entry.verdict === 'entertainment') item.classList.add('counted');
+
+  const main = document.createElement('div');
+  main.className = 'activity-main';
+
+  const title = document.createElement('a');
+  title.className = 'activity-title';
+  title.textContent = entry.title || entry.domain;
+  title.href = entry.url;
+  title.target = '_blank';
+  title.rel = 'noreferrer';
+
+  const meta = document.createElement('div');
+  meta.className = 'activity-meta';
+  meta.textContent = entry.domain;
+
+  main.append(title, meta);
+
+  const aside = document.createElement('div');
+  aside.className = 'activity-aside';
+  const verdict = document.createElement('span');
+  verdict.className = `verdict ${entry.verdict === 'entertainment' ? 'entertainment' : 'productive'}`;
+  verdict.textContent = entry.verdict === 'entertainment' ? 'Counted' : 'Ignored';
+  const source = document.createElement('span');
+  source.className = 'source';
+  source.textContent = `${modeLabel(entry.mode)} · ${sourceLabel(entry.source)}`;
+  const time = document.createElement('span');
+  time.className = 'activity-time';
+  time.textContent = fmtMs(entry.countedMs ?? 0);
+  const overrideBtn = document.createElement('button');
+  overrideBtn.className = 'override-btn';
+  overrideBtn.dataset.activityId = entry.id;
+  overrideBtn.dataset.verdict = entry.verdict === 'entertainment' ? 'productive' : 'entertainment';
+  overrideBtn.textContent = entry.verdict === 'entertainment' ? 'Ignore' : 'Count';
+  overrideBtn.title = entry.verdict === 'entertainment' ? 'Mark this page as productive' : 'Mark this page as distracting';
+  aside.append(verdict, source, time, overrideBtn);
+
+  item.append(main, aside);
+  return item;
 }
 
 async function loadStatus() {
@@ -128,9 +202,37 @@ async function loadStatus() {
   });
 }
 
+async function clearClassificationCache() {
+  return new Promise(resolve => {
+    chrome.runtime.sendMessage({ type: MSG.CLEAR_CACHE }, response => {
+      void chrome.runtime.lastError;
+      resolve(response ?? { ok: false, count: 0 });
+    });
+  });
+}
+
+async function removeDomainData(domain) {
+  return new Promise(resolve => {
+    chrome.runtime.sendMessage({ type: MSG.REMOVE_DOMAIN_DATA, domain }, response => {
+      void chrome.runtime.lastError;
+      resolve(response ?? { ok: false });
+    });
+  });
+}
+
+async function setActivityOverride(id, verdict) {
+  return new Promise(resolve => {
+    chrome.runtime.sendMessage({ type: MSG.SET_OVERRIDE, id, verdict }, response => {
+      void chrome.runtime.lastError;
+      resolve(response ?? { ok: false, entry: null });
+    });
+  });
+}
+
 async function getConfig() {
   const { config } = await chrome.storage.local.get('config');
-  return config ?? defaultConfig();
+  const cfg = config ?? defaultConfig();
+  return { ...cfg, domains: cfg.domains ?? {} };
 }
 
 async function saveConfig(config) {
@@ -138,8 +240,9 @@ async function saveConfig(config) {
 }
 
 async function render() {
-  // Skip rebuild if the user is editing a limit input to avoid resetting focus.
-  if (document.activeElement?.classList.contains('limit-input')) return;
+  // Skip rebuild if the user is editing row controls to avoid resetting focus.
+  if (document.activeElement?.classList.contains('limit-input') ||
+      document.activeElement?.classList.contains('mode-select')) return;
 
   const [status, config, isOllamaOk, sessionData] = await Promise.all([
     loadStatus(),
@@ -161,6 +264,7 @@ async function render() {
   const tbody = document.getElementById('usage-body');
   const emptyRow = document.getElementById('empty-row');
   const domains = status?.domains ?? [];
+  const activity = status?.activity ?? [];
 
   // Only show domains that have an explicit limit configured.
   // Domains with usage but no limit (removed from config) should not appear.
@@ -171,29 +275,30 @@ async function render() {
 
   if (allDomains.length === 0) {
     emptyRow.style.display = '';
-    return;
-  }
-  emptyRow.style.display = 'none';
+  } else {
+    emptyRow.style.display = 'none';
 
-  for (const domain of allDomains) {
-    const stat = domains.find(d => d.domain === domain);
-    const limitMs = (config.domains[domain]?.limitMinutes ?? config.defaultLimitMinutes) * 60000;
-    const storedMs = stat?.usedMs ?? 0;
-    // Add live elapsed for the domain currently being tracked.
-    const usedMs = storedMs + (activeSession?.domain === domain ? liveElapsedMs : 0);
-    const effectiveLimit = limitMs + (stat?.extraMs ?? 0);
-    const blocked = stat?.blocked ?? false;
-    const snoozed = stat?.snoozed ?? false;
+    for (const domain of allDomains) {
+      const stat = domains.find(d => d.domain === domain);
+      const domainConfig = config.domains[domain] ?? {};
+      const baseLimitMs = (domainConfig.limitMinutes ?? config.defaultLimitMinutes) * 60000;
+      const effectiveLimitMs = stat?.effectiveLimitMs ?? stat?.limitMs ?? baseLimitMs;
+      const storedMs = stat?.usedMs ?? 0;
+      // Add live elapsed for the domain currently being tracked.
+      const usedMs = storedMs + (activeSession?.domain === domain ? liveElapsedMs : 0);
+      const blocked = stat?.blocked ?? false;
 
-    tbody.appendChild(buildUsageRow({
-      domain,
-      usedMs,
-      effectiveLimit,
-      blocked,
-      snoozed,
-      activeSession,
-      sessionPaused,
-    }));
+      tbody.appendChild(buildUsageRow({
+        domain,
+        mode: domainConfig.mode ?? BLOCK_MODE.SMART,
+        usedMs,
+        baseLimitMs,
+        effectiveLimitMs,
+        blocked,
+        activeSession,
+        sessionPaused,
+      }));
+    }
   }
 
   // Limit edit handlers
@@ -212,6 +317,18 @@ async function render() {
     input.addEventListener('keydown', e => { if (e.key === 'Enter') { input.blur(); saveLimit(); } });
   });
 
+  // Mode edit handlers
+  tbody.querySelectorAll('.mode-select').forEach(select => {
+    select.addEventListener('change', async () => {
+      const domain = select.dataset.domain;
+      const cfg = await getConfig();
+      cfg.domains[domain] = { ...cfg.domains[domain], mode: select.value };
+      await saveConfig(cfg);
+      chrome.runtime.sendMessage({ type: MSG.RECONCILE }).catch(() => {});
+      await render();
+    });
+  });
+
   // Remove handlers
   tbody.querySelectorAll('.remove-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
@@ -219,12 +336,39 @@ async function render() {
       const cfg = await getConfig();
       delete cfg.domains[domain];
       await saveConfig(cfg);
-      // Remove the DNR rule directly from the popup — don't rely on the service
-      // worker being awake to process a RECONCILE message.
-      await chrome.declarativeNetRequest.updateDynamicRules({
-        addRules: [],
-        removeRuleIds: [ruleIdForDomain(domain)],
-      });
+      await removeDomainData(domain);
+      await render();
+    });
+  });
+
+  const activityForDisplay = activity.map(entry => {
+    if (entry.id === activeSession?.activityId && entry.verdict === 'entertainment') {
+      return { ...entry, countedMs: (entry.countedMs ?? 0) + liveElapsedMs };
+    }
+    return entry;
+  });
+
+  const countedTotal = activityForDisplay.reduce((sum, entry) => sum + (entry.countedMs ?? 0), 0);
+  const ignoredTotal = activityForDisplay.filter(entry => entry.verdict !== 'entertainment').length;
+  document.getElementById('counted-total').textContent = fmtMs(countedTotal);
+  document.getElementById('ignored-total').textContent = String(ignoredTotal);
+
+  const list = document.getElementById('activity-list');
+  const activityEmpty = document.getElementById('activity-empty');
+  [...list.querySelectorAll('.activity-item')].forEach(item => item.remove());
+  if (activityForDisplay.length === 0) {
+    activityEmpty.style.display = '';
+  } else {
+    activityEmpty.style.display = 'none';
+    for (const entry of activityForDisplay.slice(0, 60)) {
+      list.appendChild(buildActivityRow(entry));
+    }
+  }
+
+  list.querySelectorAll('.override-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      await setActivityOverride(btn.dataset.activityId, btn.dataset.verdict);
       await render();
     });
   });
@@ -232,6 +376,7 @@ async function render() {
 
 // Add new domain limit
 const domainInput = document.getElementById('add-domain');
+const modeInput = document.getElementById('add-mode');
 const minsInput   = document.getElementById('add-minutes');
 const errorEl     = document.getElementById('add-error');
 
@@ -250,14 +395,42 @@ async function addDomain() {
   }
 
   const cfg = await getConfig();
-  cfg.domains[domain] = { limitMinutes: mins };
+  cfg.domains[domain] = { limitMinutes: mins, mode: modeInput.value };
   await saveConfig(cfg);
   domainInput.value = '';
+  modeInput.value = BLOCK_MODE.SMART;
   minsInput.value = String(DEFAULT_LIMIT_MINUTES);
   await render();
 }
 
 document.getElementById('add-btn').addEventListener('click', addDomain);
+
+document.getElementById('refresh-ollama').addEventListener('click', async () => {
+  const btn = document.getElementById('refresh-ollama');
+  btn.disabled = true;
+  await refreshOllamaStatus();
+  await render();
+  btn.disabled = false;
+});
+
+document.getElementById('clear-cache').addEventListener('click', async () => {
+  const btn = document.getElementById('clear-cache');
+  const status = document.getElementById('tools-status');
+  btn.disabled = true;
+  const result = await clearClassificationCache();
+  status.textContent = result.ok ? `Cleared ${result.count}` : 'Clear failed';
+  btn.disabled = false;
+});
+
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    const name = tab.dataset.tab;
+    document.querySelectorAll('.tab').forEach(btn => btn.classList.toggle('active', btn === tab));
+    document.querySelectorAll('.tab-panel').forEach(panel => {
+      panel.classList.toggle('active', panel.id === `${name}-panel`);
+    });
+  });
+});
 
 function onEnter(e) { if (e.key === 'Enter') addDomain(); }
 domainInput.addEventListener('keydown', onEnter);

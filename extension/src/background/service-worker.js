@@ -7,10 +7,14 @@ import {
   flushElapsed, setLimitReachedCallback, getDomainStatus,
   pauseSession, resumeSession,
 } from './timer.js';
-import { enforceBlock, snooze, isDomainBlocked, unblockDomain } from './blocker.js';
-import { isOverLimit, getTodayDomains, getSession, setCurrentTab, setActiveSession, getConfig } from './storage.js';
+import { enforceBlock, isDomainBlocked, unblockDomain } from './blocker.js';
+import {
+  isOverLimit, getTodayDomains, getTodayActivity, getSession,
+  setCurrentTab, setActiveSession, getConfig, recordActivity,
+  clearCache, clearTodayDomainData, applyActivityOverride,
+} from './storage.js';
 import { initAlarms, checkMissedReset, performReset, ALARM_POLL, ALARM_MIDNIGHT } from './alarms.js';
-import { BLOCK_PAGE } from '../shared/config.js';
+import { BLOCK_MODE, BLOCK_PAGE } from '../shared/config.js';
 
 // Wire up the callback so timer.js can trigger blocking without a circular import.
 setLimitReachedCallback(async (domain) => {
@@ -108,15 +112,6 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
     handleTabInfo(msg, sender.tab).catch(console.error);
     return false;
   }
-  if (msg.type === MSG.SNOOZE) {
-    snooze(msg.domain)
-      .then(() => respond({ ok: true }))
-      .catch(error => {
-        console.error(error);
-        respond({ ok: false });
-      });
-    return true;
-  }
   if (msg.type === MSG.GET_STATUS) {
     buildStatusResponse().then(respond).catch(() => respond({}));
     return true; // async
@@ -124,6 +119,33 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
   if (msg.type === MSG.RECONCILE) {
     reconcileBlocks().catch(console.error);
     return false;
+  }
+  if (msg.type === MSG.CLEAR_CACHE) {
+    clearCache()
+      .then(count => respond({ ok: true, count }))
+      .catch(error => {
+        console.error(error);
+        respond({ ok: false, count: 0 });
+    });
+    return true;
+  }
+  if (msg.type === MSG.REMOVE_DOMAIN_DATA) {
+    removeDomainData(msg.domain)
+      .then(() => respond({ ok: true }))
+      .catch(error => {
+        console.error(error);
+        respond({ ok: false });
+      });
+    return true;
+  }
+  if (msg.type === MSG.SET_OVERRIDE) {
+    handleOverride(msg)
+      .then(entry => respond({ ok: Boolean(entry), entry }))
+      .catch(error => {
+        console.error(error);
+        respond({ ok: false, entry: null });
+      });
+    return true;
   }
   if (msg.type === MSG.VIDEO_PAUSED) {
     handleVideoState(sender.tab, false).catch(console.error);
@@ -212,16 +234,43 @@ async function handleTabInfo(msg, tab) {
 }
 
 async function processTabInfo(tabId, windowId, domain, { url, title, snippet, videoPlaying }) {
-  const { verdict } = await classify(domain, url, title ?? '', snippet ?? '');
-  await onVerdictChanged({ tabId, windowId, domain, verdict, url });
+  const config = await getConfig();
+  const domainConfig = config.domains[domain] ?? null;
+  const mode = domainConfig?.mode ?? null;
+  let verdict;
+  let source;
+
+  if (mode === BLOCK_MODE.STRICT) {
+    verdict = VERDICT.ENTERTAINMENT;
+    source = 'strict';
+  } else if (!domainConfig) {
+    verdict = VERDICT.PRODUCTIVE;
+    source = 'untracked';
+  } else {
+    const result = await classify(domain, url, title ?? '', snippet ?? '', {
+      allowOllama: true,
+    });
+    verdict = result.verdict;
+    source = result.source;
+  }
+
+  const activityId = domainConfig
+    ? await recordActivity({ domain, url, title: title ?? '', verdict, source, mode: mode ?? BLOCK_MODE.SMART })
+    : null;
+
+  await onVerdictChanged({ tabId, windowId, domain, verdict, url, activityId, mode: mode ?? BLOCK_MODE.SMART });
 
   if (verdict === VERDICT.ENTERTAINMENT) {
-    // If a video is present but paused, pause the session immediately.
-    if (videoPlaying === false) await pauseSession();
-
     // Only enforce limits for explicitly configured domains.
-    const config = await getConfig();
-    if (!config.domains[domain]) return;
+    if (!domainConfig) return;
+
+    // Smart video pages should only count while media is actually playing.
+    // Confirm after a short delay because YouTube can emit stale paused state
+    // while swapping player elements.
+    if (mode !== BLOCK_MODE.STRICT && videoPlaying === false) {
+      const stillPaused = await confirmNoVideoPlaying(tabId);
+      if (stillPaused) await pauseSession();
+    }
 
     // Re-check limit (may have crossed while classifying).
     const over = await isOverLimit(domain);
@@ -236,16 +285,63 @@ async function handleVideoState(tab, playing) {
   if (!activeSession || activeSession.tabId !== tab.id || activeSession.windowId !== tab.windowId) {
     return;
   }
+  if (activeSession.mode === BLOCK_MODE.STRICT) return;
 
   if (playing) {
     await resumeSession();
   } else {
-    await pauseSession();
+    const stillPaused = await confirmNoVideoPlaying(tab.id);
+    if (stillPaused) await pauseSession();
+  }
+
+}
+
+async function confirmNoVideoPlaying(tabId) {
+  await new Promise(resolve => setTimeout(resolve, 300));
+  try {
+    const response = await chrome.tabs.sendMessage(tabId, { type: MSG.GET_INFO });
+    return response?.videoPlaying === false;
+  } catch {
+    return false;
   }
 }
 
 async function buildStatusResponse() {
-  const domains = await getTodayDomains();
+  const [domains, activity] = await Promise.all([getTodayDomains(), getTodayActivity()]);
   const statuses = await Promise.all(domains.map(d => getDomainStatus(d)));
-  return { domains: statuses };
+  return { domains: statuses, activity };
+}
+
+async function handleOverride({ id, verdict }) {
+  if (!['productive', 'entertainment'].includes(verdict)) return null;
+  const { activeSession } = await getSession();
+  if (verdict === VERDICT.PRODUCTIVE && activeSession?.activityId === id) {
+    chrome.alarms.clear(`block_${activeSession.domain}`);
+    await setActiveSession(null);
+  }
+
+  const entry = await applyActivityOverride({ id, verdict });
+  if (!entry) return null;
+
+  const tabs = await chrome.tabs.query({ url: ['http://*/*', 'https://*/*'] });
+  const matchingTabs = tabs.filter(tab => tab.url === entry.url);
+  for (const tab of matchingTabs) {
+    await handleTabFocus(tab.id, tab.windowId);
+  }
+
+  return entry;
+}
+
+async function removeDomainData(domain) {
+  if (!domain) return;
+  const { activeSession, currentTab } = await getSession();
+  if (activeSession?.domain === domain) {
+    chrome.alarms.clear(`block_${domain}`);
+    await setActiveSession(null);
+  }
+  if (currentTab?.domain === domain) {
+    await setCurrentTab(null);
+  }
+  await clearTodayDomainData(domain);
+  await unblockDomain(domain);
 }

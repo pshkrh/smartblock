@@ -1,4 +1,3 @@
-import { MSG } from '../shared/messages.js';
 import { defaultConfig } from '../shared/config.js';
 import { localDateKey } from '../shared/date.js';
 
@@ -30,7 +29,7 @@ async function checkShouldUnblock() {
     chrome.storage.local.get(usageKey),
     chrome.storage.local.get('config'),
   ]);
-  const usage = result[usageKey] ?? { ms: 0, snoozed: false, extraMs: 0 };
+  const usage = result[usageKey] ?? { ms: 0, extraMs: 0 };
   const config = cfgResult.config ?? defaultConfig();
 
   // Domain removed from config entirely → always unblock regardless of usage.
@@ -53,21 +52,6 @@ async function init() {
 
   document.getElementById('used-time').textContent = fmtMs(usage.ms);
   document.getElementById('reset-time').textContent = fmtMs(timeUntilMidnight());
-
-  const snoozeBtn = document.getElementById('snooze-btn');
-  const snoozeUsed = document.getElementById('snooze-used');
-
-  if (usage.snoozed) {
-    snoozeBtn.style.display = 'none';
-    snoozeUsed.style.display = '';
-  } else {
-    snoozeBtn.addEventListener('click', async () => {
-      snoozeBtn.disabled = true;
-      snoozeBtn.textContent = 'Resuming…';
-      await chrome.runtime.sendMessage({ type: MSG.SNOOZE, domain });
-      location.href = fromUrl;
-    });
-  }
 
   // Tick the reset countdown every second
   setInterval(() => {

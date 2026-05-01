@@ -50,7 +50,7 @@ export const HARD_PRODUCTIVE = new Set([
   'docs.google.com',
 ]);
 
-// Domains that need per-page classification via Ollama.
+// Curated mixed-use domains with extra fast paths before Ollama.
 export const MIXED = new Set([
   'youtube.com',
   'linkedin.com',
@@ -84,7 +84,7 @@ export const VERDICT = {
  * Returns a verdict from the rule pre-pass, or null if the domain needs
  * Ollama classification.
  */
-export function ruleClassify(domain, url, title) {
+export function ruleClassify(domain, url, title, { allowOllama = false } = {}) {
   if (HARD_ENTERTAINMENT.has(domain)) return VERDICT.ENTERTAINMENT;
   if (HARD_PRODUCTIVE.has(domain)) return VERDICT.PRODUCTIVE;
 
@@ -108,10 +108,13 @@ export function ruleClassify(domain, url, title) {
     // Title keyword fast-path → productive.
     if (PRODUCTIVE_RE.test(title)) return VERDICT.PRODUCTIVE;
 
-    // Needs Ollama.
-    return null;
+    // Needs Ollama when this is a configured Smart domain.
+    return allowOllama ? null : VERDICT.PRODUCTIVE;
   }
 
-  // All other domains → productive by default (normal sites don't tick)
+  // Configured smart domains can use Ollama even when they are not in MIXED.
+  if (allowOllama) return null;
+
+  // Unconfigured/unknown domains stay productive by default.
   return VERDICT.PRODUCTIVE;
 }

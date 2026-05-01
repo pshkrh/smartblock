@@ -1,6 +1,6 @@
 import { VERDICT } from './rules.js';
 import {
-  addMs, isOverLimit, getLimitMs, getUsage, getConfig,
+  addActivityMs, addMs, isOverLimit, getLimitMs, getUsage, getConfig,
   getSession, setActiveSession, setCurrentTab,
 } from './storage.js';
 
@@ -24,6 +24,7 @@ export async function flushElapsed() {
 
   if (banked > 0) {
     const usage = await addMs(activeSession.domain, banked);
+    await addActivityMs(activeSession.activityId, banked);
     if (usage.ms >= effectiveLimit && onLimitReached) {
       onLimitReached(activeSession.domain);
     }
@@ -32,8 +33,8 @@ export async function flushElapsed() {
   }
 }
 
-export async function onVerdictChanged({ tabId, windowId, domain, verdict, url }) {
-  const tabData = { tabId, windowId, domain, verdict, url };
+export async function onVerdictChanged({ tabId, windowId, domain, verdict, url, activityId, mode }) {
+  const tabData = { tabId, windowId, domain, verdict, url, activityId, mode };
   const { activeSession } = await getSession();
 
   if (verdict === VERDICT.ENTERTAINMENT) {
@@ -55,7 +56,7 @@ export async function onVerdictChanged({ tabId, windowId, domain, verdict, url }
       return;
     }
     // activeSession stores windowId so we can scope stop events to the right window.
-    await setActiveSession({ domain, tabId, windowId, startTs: Date.now() });
+    await setActiveSession({ domain, tabId, windowId, startTs: Date.now(), activityId, mode });
     await scheduleBlockAlarm(domain);
   } else {
     // Productive/neutral tab. Only stop the entertainment session if this event
@@ -110,9 +111,11 @@ export async function getDomainStatus(domain) {
   return {
     domain,
     usedMs: usage.ms,
+    baseLimitMs: limitMs,
+    extraMs: usage.extraMs ?? 0,
     limitMs: effectiveLimit,
+    effectiveLimitMs: effectiveLimit,
     remainingMs: remaining,
-    snoozed: usage.snoozed,
     blocked: usage.ms >= effectiveLimit,
   };
 }

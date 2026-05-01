@@ -1,6 +1,6 @@
 import { OLLAMA_URL, OLLAMA_MODEL, OLLAMA_TIMEOUT_MS } from '../shared/config.js';
 import { ruleClassify, VERDICT } from './rules.js';
-import { getCached, setCached } from './storage.js';
+import { getCached, getOverride, setCached } from './storage.js';
 
 function buildPrompt(url, title, snippet) {
   return `Classify this web page as either "productive" or "entertainment".
@@ -8,6 +8,7 @@ function buildPrompt(url, title, snippet) {
 "productive": learning, work, reference, documentation, research, programming, news of substance, professional content.
 "entertainment": vlogs, memes, short-form video, gossip, casual social feeds, gaming streams, celebrity content, leisure browsing.
 
+Use the URL, page title, and page text together. For video/social/article pages, classify the specific page content, not the whole website.
 Respond with strict JSON only: {"verdict": "productive"|"entertainment", "confidence": 0.0-1.0}
 
 URL: ${url}
@@ -45,26 +46,30 @@ async function callOllama(url, title, snippet) {
 
 /**
  * Classify a page. Returns { verdict, source } where source is one of:
+ *   'override' - manually corrected by the user
  *   'rule'     - matched a domain, URL, keyword, or default rule
  *   'cache'    - returned from local cache
  *   'ollama'   - returned from Ollama
  *   'fallback' - Ollama unavailable; defaulting to productive
  */
-export async function classify(domain, url, title, snippet) {
-  // Rule pre-pass (handles HARD lists, UNKNOWN domains, MIXED fast-paths)
-  const ruleVerdict = ruleClassify(domain, url, title);
+export async function classify(domain, url, title, snippet, options = {}) {
+  const override = await getOverride(domain, url, title);
+  if (override) return { verdict: override, source: 'override' };
+
+  // Rule pre-pass (handles HARD lists, unknown domains, and curated fast-paths)
+  const ruleVerdict = ruleClassify(domain, url, title, options);
   if (ruleVerdict !== null) {
     return { verdict: ruleVerdict, source: 'rule' };
   }
 
-  // Cache lookup for MIXED domains
-  const cached = await getCached(domain, title);
+  // Cache lookup for pages that need model classification.
+  const cached = await getCached(domain, url, title);
   if (cached) return { verdict: cached, source: 'cache' };
 
   // Ollama
   const ollamaVerdict = await callOllama(url, title, snippet);
   if (ollamaVerdict) {
-    await setCached(domain, title, ollamaVerdict);
+    await setCached(domain, url, title, ollamaVerdict);
     return { verdict: ollamaVerdict, source: 'ollama' };
   }
 

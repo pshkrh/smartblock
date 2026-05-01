@@ -1,7 +1,6 @@
-import { BLOCK_PAGE, SNOOZE_DURATION_MS } from '../shared/config.js';
+import { BLOCK_PAGE } from '../shared/config.js';
 import { ruleIdForDomain } from '../shared/dnr.js';
 import { matchesDomain } from '../shared/domain.js';
-import { setSnoozed, addExtraMs, isOverLimit } from './storage.js';
 
 export async function blockDomain(domain) {
   const id = ruleIdForDomain(domain);
@@ -38,16 +37,6 @@ export async function unblockAll() {
 export async function isDomainBlocked(domain) {
   const rules = await chrome.declarativeNetRequest.getDynamicRules();
   return rules.some(r => r.id === ruleIdForDomain(domain));
-}
-
-/**
- * Handle a snooze request from the block page.
- * Unblocks the domain for SNOOZE_DURATION_MS, marks it snoozed (one-time).
- */
-export async function snooze(domain) {
-  await setSnoozed(domain);
-  await addExtraMs(domain, SNOOZE_DURATION_MS);
-  await unblockDomain(domain);
 }
 
 /**

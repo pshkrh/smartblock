@@ -2,16 +2,61 @@
   'use strict';
 
   function extractSnippet() {
+    const parts = [];
+    const selectors = [
+      'meta[property="og:title"]',
+      'meta[name="twitter:title"]',
+      'meta[name="description"]',
+      'meta[property="og:description"]',
+      'meta[name="twitter:description"]',
+    ];
+
+    for (const selector of selectors) {
+      const content = document.querySelector(selector)?.getAttribute('content');
+      if (content) parts.push(content);
+    }
+
+    for (const selector of ['h1', 'article h2', 'main h2', '[role="main"] h2']) {
+      const text = document.querySelector(selector)?.textContent;
+      if (text) parts.push(text);
+    }
+
     const el = document.querySelector('main, article, [role="main"]');
-    const text = (el || document.body).innerText ?? '';
-    return text.replace(/\s+/g, ' ').trim().slice(0, 200);
+    const bodyText = (el || document.body).innerText ?? '';
+    if (bodyText) parts.push(bodyText);
+
+    return [...new Set(parts.map(text => text.replace(/\s+/g, ' ').trim()).filter(Boolean))]
+      .join(' • ')
+      .slice(0, 700);
   }
 
-  // Returns true if any video on the page is actively playing.
+  function isVisibleVideo(video) {
+    const rect = video.getBoundingClientRect();
+    return rect.width >= 80 && rect.height >= 45;
+  }
+
+  function videoArea(video) {
+    const rect = video.getBoundingClientRect();
+    return rect.width * rect.height;
+  }
+
+  function isPlaying(video) {
+    return !video.paused && !video.ended && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA;
+  }
+
+  // Returns true if a video is actively playing, false if video exists but is
+  // paused, and null if the page has no meaningful video element.
   function isVideoPlaying() {
-    const videos = [...document.querySelectorAll('video')].filter(v => v.duration > 0);
-    if (videos.length === 0) return null; // no video present
-    return videos.some(v => !v.paused && !v.ended);
+    const videos = [...document.querySelectorAll('video')];
+    if (videos.length === 0) return null;
+
+    const visibleVideos = videos.filter(isVisibleVideo);
+    if (visibleVideos.length > 0) {
+      const primaryVideo = visibleVideos.sort((a, b) => videoArea(b) - videoArea(a))[0];
+      return isPlaying(primaryVideo);
+    }
+
+    return videos.some(isPlaying);
   }
 
   function buildInfo() {
@@ -34,6 +79,14 @@
   // Push TAB_INFO proactively on load.
   chrome.runtime.sendMessage(buildInfo()).catch(() => {});
 
+  document.addEventListener('visibilitychange', () => {
+    chrome.runtime.sendMessage(buildInfo()).catch(() => {});
+  });
+
+  window.addEventListener('focus', () => {
+    chrome.runtime.sendMessage(buildInfo()).catch(() => {});
+  });
+
   // --- Video play/pause detection ---
 
   const attachedVideos = new WeakSet();
@@ -44,9 +97,11 @@
 
     video.addEventListener('play', () => {
       chrome.runtime.sendMessage({ type: 'VIDEO_PLAYING' }).catch(() => {});
+      chrome.runtime.sendMessage(buildInfo()).catch(() => {});
     });
     video.addEventListener('pause', () => {
       chrome.runtime.sendMessage({ type: 'VIDEO_PAUSED' }).catch(() => {});
+      chrome.runtime.sendMessage(buildInfo()).catch(() => {});
     });
   }
 

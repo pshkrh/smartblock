@@ -12,36 +12,78 @@
       <img class="brand-icon" src="../../icons/icon32.png" alt="">
       <h1>SmartBlock</h1>
     </div>
-    <span id="status-badge" class="badge"></span>
+    <div class="header-actions">
+      <span id="status-badge" class="badge"></span>
+      <button id="refresh-ollama" class="icon-btn" type="button" title="Refresh Ollama status">↻</button>
+    </div>
   </header>
 
-  <section id="today-section">
-    <h2>Today</h2>
-    <table id="usage-table">
-      <thead>
-        <tr>
-          <th>Domain</th>
-          <th>Used</th>
-          <th>Limit</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody id="usage-body">
-        <tr id="empty-row"><td colspan="4" class="empty">No entertainment tracked yet today.</td></tr>
-      </tbody>
-    </table>
-  </section>
+  <nav class="tabs" aria-label="SmartBlock views">
+    <button class="tab active" type="button" data-tab="limits">Limits</button>
+    <button class="tab" type="button" data-tab="activity">Activity</button>
+  </nav>
 
-  <section id="add-section">
-    <h2>Set a limit</h2>
-    <div class="add-row">
-      <input id="add-domain" class="field domain-field" type="text" placeholder="e.g. youtube.com" spellcheck="false">
-      <input id="add-minutes" class="field mins-field" type="number" min="1" max="1440" value="30">
-      <span class="unit-label">min</span>
-      <button id="add-btn">Add</button>
+  <main>
+    <div id="limits-panel" class="tab-panel active">
+      <section id="today-section">
+        <h2>Today</h2>
+        <table id="usage-table">
+          <thead>
+            <tr>
+              <th>Domain</th>
+              <th>Mode</th>
+              <th>Used</th>
+              <th>Limit</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="usage-body">
+            <tr id="empty-row"><td colspan="5" class="empty">No limits configured yet.</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="add-section">
+        <h2>Set a limit</h2>
+        <div class="add-row">
+          <input id="add-domain" class="field domain-field" type="text" placeholder="e.g. youtube.com" spellcheck="false">
+          <select id="add-mode" class="field mode-field">
+            <option value="smart">Smart</option>
+            <option value="strict">Strict</option>
+          </select>
+          <input id="add-minutes" class="field mins-field" type="number" min="1" max="1440" value="30">
+          <span class="unit-label">min</span>
+          <button id="add-btn">Add</button>
+        </div>
+        <p id="add-error" class="error"></p>
+      </section>
     </div>
-    <p id="add-error" class="error"></p>
-  </section>
+
+    <div id="activity-panel" class="tab-panel">
+      <section>
+        <div class="section-head">
+          <h2>Activity</h2>
+          <div class="section-actions">
+            <button id="clear-cache" class="mini-btn" type="button">Clear cache</button>
+            <span id="tools-status" class="tools-status"></span>
+          </div>
+        </div>
+        <div class="activity-summary">
+          <div>
+            <span class="summary-label">Counted</span>
+            <strong id="counted-total">0s</strong>
+          </div>
+          <div>
+            <span class="summary-label">Ignored pages</span>
+            <strong id="ignored-total">0</strong>
+          </div>
+        </div>
+        <div id="activity-list" class="activity-list">
+          <p id="activity-empty" class="empty">No classified pages yet today.</p>
+        </div>
+      </section>
+    </div>
+  </main>
 
   <script type="module" src="popup.js"></script>
 </body>
