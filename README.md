@@ -12,6 +12,10 @@
   <a href="https://github.com/pshkrh/smartblock/releases">
     <img src="https://img.shields.io/github/v/release/pshkrh/smartblock?display_name=tag" alt="Latest release">
   </a>
+  <a href="https://github.com/pshkrh/smartblock/blob/main/LICENSE">
+    <img src="https://img.shields.io/github/license/pshkrh/smartblock" alt="MIT License">
+  </a>
+  <img src="https://img.shields.io/badge/platform-Chrome%20extension-4285F4" alt="Chrome extension">
 </p>
 
 <p align="center">
