@@ -1,14 +1,10 @@
 # SmartBlock
 
-![SmartBlock logo](./extension/icons/icon128.png)
-
-**Smart website blocking that only counts distracting time.**
+![SmartBlock banner](./assets/readme-banner.svg)
 
 [![Latest release](https://img.shields.io/github/v/release/pshkrh/smartblock?display_name=tag)](https://github.com/pshkrh/smartblock/releases)
 [![MIT License](https://img.shields.io/github/license/pshkrh/smartblock)](https://github.com/pshkrh/smartblock/blob/main/LICENSE)
 ![Chrome extension](https://img.shields.io/badge/platform-Chrome%20extension-4285F4)
-
-Chrome/Brave extension for local Ollama classification with Smart and Strict blocking modes.
 
 SmartBlock is a Chrome/Brave extension for time blocking mixed-use websites with a local Ollama model. Instead of treating an entire domain as distracting, it classifies the specific page you are on and only counts pages that look like entertainment.
 
