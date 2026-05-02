@@ -9,10 +9,10 @@
 </p>
 
 <p align="center">
-  Chrome MV3 extension • Local Ollama classification • Smart and Strict blocking modes
+  Chromium MV3 extension • Local Ollama classification • Smart and Strict blocking modes
 </p>
 
-SmartBlock is a Chrome extension for time blocking mixed-use websites with a local Ollama model. Instead of treating an entire domain as distracting, it classifies the specific page you are on and only counts the pages that look like entertainment.
+SmartBlock is a Chrome/Brave extension for time blocking mixed-use websites with a local Ollama model. Instead of treating an entire domain as distracting, it classifies the specific page you are on and only counts pages that look like entertainment.
 
 | Mode | Behavior |
 | --- | --- |
@@ -31,6 +31,10 @@ SmartBlock is a Chrome extension for time blocking mixed-use websites with a loc
 
 - SmartBlock only tracks domains you explicitly add in the popup.
 - SmartBlock can count tracked tabs across multiple Brave/Chrome windows at the same time.
+- SmartBlock tracks one active tab per browser window. Background tabs in the same window do not count.
+- Two active tracked domains in two windows can count at the same time.
+- Multiple active pages on the same domain count against that domain only once, so two `youtube.com` windows do not spend the limit twice as fast.
+- In Smart mode, video pages only count while the active video is playing. Strict mode counts active time regardless of video state.
 - Ollama status in the popup is tied to the selected model:
   - `?` no model selected yet
   - `✓` available in Ollama
@@ -39,12 +43,16 @@ SmartBlock is a Chrome extension for time blocking mixed-use websites with a loc
 
 ## How Classification Works
 
-For Smart domains, SmartBlock evaluates a page in this order:
+For `Smart` domains, SmartBlock evaluates a page in this order:
 
 1. Manual override from the Activity tab
 2. Cached classification
 3. Ollama classification
 4. Fail-open fallback to productive if Ollama is unavailable or no model is selected
+
+Smart mode is model-driven for tracked domains. The built-in rule layer only keeps untracked domains out of Ollama; it does not hardcode sites as productive or distracting.
+
+SmartBlock sends Ollama the current page URL, page title, and a compact content snippet. The snippet is built from high-signal page text such as Open Graph/Twitter title and description metadata, meta descriptions, `h1`/main headings, and visible text from the main page area. It intentionally does not send the whole page, because full-page dumps are slower, noisier, and often include navigation, comments, recommendations, and other boilerplate.
 
 ## Install
 
@@ -77,9 +85,9 @@ launchctl setenv OLLAMA_ORIGINS "chrome-extension://*"
 open -a Ollama
 ```
 
-### 4. Load the extension in Chrome
+### 4. Load the extension in Chrome or Brave
 
-1. Open `chrome://extensions`
+1. Open `chrome://extensions` or `brave://extensions`
 2. Enable `Developer mode`
 3. Click `Load unpacked`
 4. Select `/path/to/smartblock/extension`
@@ -101,6 +109,8 @@ open -a Ollama
 4. Set a daily limit in minutes
 
 In the Activity tab, you can inspect what counted, what did not, and override bad model decisions.
+
+Use `Smart` when only some pages on a site should count. Use `Strict` when every active page on that domain should count.
 
 ## Popup Overview
 
@@ -145,6 +155,8 @@ Use `Strict` mode when you want a site to count deterministically.
 
 Use `Smart` mode when you want SmartBlock to classify each page with Ollama and only count distracting content.
 
+Pick the Ollama model from the popup header. SmartBlock does not ship with a default model because local model availability varies by user and machine.
+
 ## Troubleshooting
 
 **Popup says `Ollama offline`**
@@ -169,4 +181,4 @@ Use the Activity tab to mark it as `Count` or `Ignore`. Manual overrides win ove
 
 **Deleting and re-adding a site still shows old usage**
 
-Current code clears today's stored usage when a domain is removed. Reload the extension if the popup is showing stale state after a recent code update.
+Removing a domain clears today's stored usage and activity for that site. Reload the popup if it was open while you made the change.
