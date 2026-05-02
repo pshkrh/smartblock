@@ -1,5 +1,3 @@
-# SmartBlock
-
 ![SmartBlock banner](./assets/readme-banner.svg)
 
 [![Latest release](https://img.shields.io/github/v/release/pshkrh/smartblock?display_name=tag)](https://github.com/pshkrh/smartblock/releases)
