@@ -173,6 +173,12 @@ function sourceLabel(source) {
   return 'Rule';
 }
 
+function activitySourceText(entry) {
+  const mode = modeLabel(entry.mode);
+  const source = sourceLabel(entry.source);
+  return mode === source ? mode : `${mode} · ${source}`;
+}
+
 function buildUsageRow({ domain, mode, usedMs, baseLimitMs, effectiveLimitMs, blocked, activeDomainState }) {
   const tr = document.createElement('tr');
   if (blocked) tr.classList.add('blocked');
@@ -271,7 +277,7 @@ function buildActivityRow(entry) {
   verdict.textContent = entry.verdict === 'entertainment' ? 'Counted' : 'Ignored';
   const source = document.createElement('span');
   source.className = 'source';
-  source.textContent = `${modeLabel(entry.mode)} · ${sourceLabel(entry.source)}`;
+  source.textContent = activitySourceText(entry);
   const time = document.createElement('span');
   time.className = 'activity-time';
   time.textContent = fmtMs(entry.countedMs ?? 0);
@@ -361,6 +367,15 @@ async function setActivityOverride(id, verdict) {
   });
 }
 
+async function reconcileCurrentTabs() {
+  return new Promise(resolve => {
+    chrome.runtime.sendMessage({ type: MSG.RECONCILE }, response => {
+      void chrome.runtime.lastError;
+      resolve(response ?? { ok: false });
+    });
+  });
+}
+
 async function getConfig() {
   const { config } = await chrome.storage.local.get('config');
   const defaults = defaultConfig();
@@ -384,11 +399,11 @@ async function render() {
       document.activeElement?.id === 'model-select') return;
 
   const config = await getConfig();
-  const [status, ollama, activeSessions] = await Promise.all([
-    getStatusSnapshot(),
+  const [ollama, activeSessions] = await Promise.all([
     getOllamaState(config.ollamaModel),
     getActiveSessionsForDisplay(),
   ]);
+  const status = await getStatusSnapshot(activeSessions.length > 0);
 
   const domainState = new Map();
   const activityElapsed = new Map();
@@ -475,8 +490,7 @@ async function render() {
       const cfg = await getConfig();
       cfg.domains[domain] = { ...cfg.domains[domain], limitMinutes: mins };
       await saveConfig(cfg);
-      // Raising the limit may lift a block — let the SW reconcile.
-      chrome.runtime.sendMessage({ type: MSG.RECONCILE }).catch(() => {});
+      await reconcileCurrentTabs();
       await refreshStatusSnapshot();
     }
     input.addEventListener('change', saveLimit);
@@ -490,7 +504,8 @@ async function render() {
       const cfg = await getConfig();
       cfg.domains[domain] = { ...cfg.domains[domain], mode: select.value };
       await saveConfig(cfg);
-      chrome.runtime.sendMessage({ type: MSG.RECONCILE }).catch(() => {});
+      select.blur();
+      await reconcileCurrentTabs();
       await refreshStatusSnapshot();
       await render();
     });

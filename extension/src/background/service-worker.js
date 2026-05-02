@@ -113,8 +113,13 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
     return true; // async
   }
   if (msg.type === MSG.RECONCILE) {
-    reconcileBlocks().catch(console.error);
-    return false;
+    reconcileAfterConfigChange()
+      .then(() => respond({ ok: true }))
+      .catch(error => {
+        console.error(error);
+        respond({ ok: false });
+      });
+    return true;
   }
   if (msg.type === MSG.CLEAR_CACHE) {
     clearCache()
@@ -187,6 +192,11 @@ async function reconcileActiveTabs(preferredWindowId = null) {
   }
 }
 
+async function reconcileAfterConfigChange() {
+  await reconcileBlocks();
+  await reconcileActiveTabs();
+}
+
 async function handleTabFocus(tabId, windowId) {
   let tab;
   try {
@@ -194,16 +204,11 @@ async function handleTabFocus(tabId, windowId) {
   } catch { return; }
 
   const url = tab.url ?? '';
-  if (!url || url.startsWith('chrome') || url.startsWith('chrome-extension')) {
-    // Non-trackable page. Only stop the session if it's in the SAME window as
-    // the entertainment tab (user switched tabs within that window). Entertainment
-    // in another window keeps running.
+  const domain = extractDomain(url);
+  if (!domain) {
     await stopSessionsByWindow(tab.windowId);
     return;
   }
-
-  const domain = extractDomain(url);
-  if (!domain) return;
 
   // If domain is already blocked, redirect immediately without classifying.
   const blocked = await isDomainBlocked(domain);
@@ -215,18 +220,40 @@ async function handleTabFocus(tabId, windowId) {
     return;
   }
 
-  // Request content from the content script.
+  const config = await getConfig();
+  const domainConfig = config.domains[domain] ?? null;
+
+  if (!domainConfig) {
+    await processTabInfo(tabId, windowId, domain, {
+      url,
+      title: tab.title ?? '',
+      snippet: '',
+      videoPlaying: null,
+    }, config);
+    return;
+  }
+
+  if (domainConfig.mode === BLOCK_MODE.STRICT) {
+    await processTabInfo(tabId, windowId, domain, {
+      url,
+      title: tab.title ?? '',
+      snippet: '',
+      videoPlaying: null,
+    }, config);
+    return;
+  }
+
   let info = { url, title: tab.title ?? '', snippet: '' };
   try {
     const response = await chrome.tabs.sendMessage(tabId, { type: MSG.GET_INFO });
     if (response) info = response;
   } catch { /* content script not ready yet; use tab metadata */ }
 
-  await processTabInfo(tabId, windowId, domain, info);
+  await processTabInfo(tabId, windowId, domain, info, config);
 }
 
-async function processTabInfo(tabId, windowId, domain, { url, title, snippet, videoPlaying }) {
-  const config = await getConfig();
+async function processTabInfo(tabId, windowId, domain, { url, title, snippet, videoPlaying }, providedConfig = null) {
+  const config = providedConfig ?? await getConfig();
   const domainConfig = config.domains[domain] ?? null;
   const mode = domainConfig?.mode ?? null;
   let verdict;

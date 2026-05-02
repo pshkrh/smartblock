@@ -2,6 +2,7 @@ import { ACTIVITY_LIMIT, BLOCK_MODE, CACHE_TTL_MS, defaultConfig } from '../shar
 import { localDateKey } from '../shared/date.js';
 
 const HISTORY_RETENTION_DAYS = 14;
+const USAGE_KEY_RE = /^usage_(\d{4}-\d{2}-\d{2})_/;
 
 // --- Config ---
 
@@ -114,14 +115,20 @@ export async function clearTodayDomainData(domain) {
 
 // --- Classification cache ---
 
-async function cacheKey(domain, url, model) {
-  const raw = new TextEncoder().encode(pageIdentity(domain, url) + '\x1f' + model);
+function contentIdentity(title) {
+  return (title ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+async function cacheKey(domain, url, title, model) {
+  const raw = new TextEncoder().encode(
+    pageIdentity(domain, url) + '\x1f' + contentIdentity(title) + '\x1f' + model
+  );
   const buf = await crypto.subtle.digest('SHA-256', raw);
   return 'cache_' + Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-export async function getCached(domain, url, model) {
-  const key = await cacheKey(domain, url, model);
+export async function getCached(domain, url, title, model) {
+  const key = await cacheKey(domain, url, title, model);
   const result = await chrome.storage.local.get(key);
   const entry = result[key];
   if (!entry) return null;
@@ -129,8 +136,8 @@ export async function getCached(domain, url, model) {
   return entry.verdict;
 }
 
-export async function setCached(domain, url, model, verdict) {
-  const key = await cacheKey(domain, url, model);
+export async function setCached(domain, url, title, model, verdict) {
+  const key = await cacheKey(domain, url, title, model);
   await chrome.storage.local.set({ [key]: { verdict, ts: Date.now() } });
 }
 
@@ -182,12 +189,8 @@ export async function setLastResetDay(day) {
   await chrome.storage.local.set({ lastResetDay: day });
 }
 
-// Removes all usage entries for today (called at midnight).
+// Marks the current day as reset. Historical usage is pruned separately.
 export async function resetToday() {
-  const prefix = `usage_${localDateKey()}_`;
-  const all = await chrome.storage.local.get(null);
-  const keys = Object.keys(all).filter(k => k.startsWith(prefix));
-  if (keys.length) await chrome.storage.local.remove(keys);
   await setLastResetDay(localDateKey());
 }
 
@@ -206,6 +209,13 @@ export async function pruneHistory() {
   const staleKeys = [];
 
   for (const [key, value] of Object.entries(all)) {
+    const usageMatch = key.match(USAGE_KEY_RE);
+    if (usageMatch) {
+      const ts = new Date(`${usageMatch[1]}T00:00:00`).getTime();
+      if (Number.isFinite(ts) && ts < cutoff) staleKeys.push(key);
+      continue;
+    }
+
     if (key.startsWith('activity_')) {
       const entries = Array.isArray(value) ? value : [];
       const kept = entries.filter(entry => (entry.lastSeenTs ?? entry.firstSeenTs ?? 0) >= cutoff);

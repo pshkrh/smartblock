@@ -66,7 +66,7 @@ export async function classify(domain, url, title, snippet, options = {}) {
   }
 
   // Cache lookup for pages that need model classification.
-  const cached = await getCached(domain, url, model);
+  const cached = await getCached(domain, url, title, model);
   if (cached) return { verdict: cached, source: 'cache' };
 
   if (!model) {
@@ -76,7 +76,7 @@ export async function classify(domain, url, title, snippet, options = {}) {
   // Ollama
   const ollamaVerdict = await callOllama(url, title, snippet, model);
   if (ollamaVerdict) {
-    await setCached(domain, url, model, ollamaVerdict);
+    await setCached(domain, url, title, model, ollamaVerdict);
     return { verdict: ollamaVerdict, source: 'ollama' };
   }
 

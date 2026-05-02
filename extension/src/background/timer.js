@@ -5,7 +5,14 @@ import {
 } from './storage.js';
 
 let onLimitReached = null;
+let mutationQueue = Promise.resolve();
 export function setLimitReachedCallback(cb) { onLimitReached = cb; }
+
+function serializeMutation(fn) {
+  const run = mutationQueue.then(fn, fn);
+  mutationQueue = run.catch(() => {});
+  return run;
+}
 
 function uniqueDomains(sessions) {
   return [...new Set(sessions.map(session => session.domain))];
@@ -58,7 +65,7 @@ async function sessionTabExists(session) {
   }
 }
 
-export async function pruneMissingSessions() {
+async function pruneMissingSessionsUnlocked() {
   const { activeSessions } = await getSession();
   if (!activeSessions.length) return [];
 
@@ -70,12 +77,16 @@ export async function pruneMissingSessions() {
   return liveSessions;
 }
 
-export async function flushElapsed({ pruneMissing = true } = {}) {
+export function pruneMissingSessions() {
+  return serializeMutation(pruneMissingSessionsUnlocked);
+}
+
+async function flushElapsedUnlocked({ pruneMissing = true } = {}) {
   const { activeSessions: storedSessions } = await getSession();
   if (!storedSessions.length) return;
 
   const activeSessions = pruneMissing
-    ? await pruneMissingSessions()
+    ? await pruneMissingSessionsUnlocked()
     : storedSessions;
 
   if (!activeSessions.length) return;
@@ -142,102 +153,119 @@ export async function flushElapsed({ pruneMissing = true } = {}) {
   await setActiveSessions(nextSessions);
 }
 
+export function flushElapsed(options = {}) {
+  return serializeMutation(() => flushElapsedUnlocked(options));
+}
+
 export async function onVerdictChanged({ tabId, windowId, domain, verdict, url, activityId, mode }) {
   const tabData = { tabId, windowId, domain, verdict, url, activityId, mode };
-  const { activeSessions } = await getSession();
+  return serializeMutation(async () => {
+    await flushElapsedUnlocked();
+    const { activeSessions: flushedSessions } = await getSession();
+    await setCurrentTab(tabData);
 
-  await flushElapsed();
-  const { activeSessions: flushedSessions } = await getSession();
-  await setCurrentTab(tabData);
+    if (verdict === VERDICT.ENTERTAINMENT) {
+      const config = await getConfig();
+      if (!config.domains[domain]) {
+        const nextSessions = flushedSessions.filter(session => session.windowId !== windowId);
+        await replaceSessions(nextSessions, flushedSessions);
+        return;
+      }
 
-  if (verdict === VERDICT.ENTERTAINMENT) {
-    const config = await getConfig();
-    if (!config.domains[domain]) {
-      const nextSessions = flushedSessions.filter(session => session.windowId !== windowId);
+      const overLimit = await isOverLimit(domain);
+      if (overLimit) {
+        const nextSessions = flushedSessions.filter(session => session.windowId !== windowId);
+        await replaceSessions(nextSessions, flushedSessions);
+        if (onLimitReached) onLimitReached(domain);
+        return;
+      }
+
+      const nextSession = { domain, tabId, windowId, startTs: Date.now(), activityId, mode };
+      const nextSessions = [
+        ...flushedSessions.filter(session => session.windowId !== windowId),
+        nextSession,
+      ];
       await replaceSessions(nextSessions, flushedSessions);
       return;
     }
 
-    const overLimit = await isOverLimit(domain);
-    if (overLimit) {
-      const nextSessions = flushedSessions.filter(session => session.windowId !== windowId);
-      await replaceSessions(nextSessions, flushedSessions);
-      if (onLimitReached) onLimitReached(domain);
-      return;
-    }
-
-    const nextSession = { domain, tabId, windowId, startTs: Date.now(), activityId, mode };
-    const nextSessions = [
-      ...flushedSessions.filter(session => session.windowId !== windowId),
-      nextSession,
-    ];
+    const nextSessions = flushedSessions.filter(session => session.windowId !== windowId);
     await replaceSessions(nextSessions, flushedSessions);
-    return;
-  }
-
-  const nextSessions = flushedSessions.filter(session => session.windowId !== windowId);
-  await replaceSessions(nextSessions, flushedSessions);
+  });
 }
 
 export async function onWindowBlurred() {
-  const { activeSessions } = await getSession();
-  if (!activeSessions.length) return;
-  await flushElapsed();
-  await replaceSessions([], activeSessions);
+  return serializeMutation(async () => {
+    const { activeSessions } = await getSession();
+    if (!activeSessions.length) return;
+    await flushElapsedUnlocked();
+    const { activeSessions: flushedSessions } = await getSession();
+    await replaceSessions([], flushedSessions);
+  });
 }
 
 export async function pauseSession(tabId, windowId) {
-  await flushElapsed();
-  const { activeSessions } = await getSession();
-  let changed = false;
-  const nextSessions = activeSessions.map(session => {
-    if (session.tabId === tabId && session.windowId === windowId && !session.paused) {
-      changed = true;
-      return { ...session, paused: true };
-    }
-    return session;
+  return serializeMutation(async () => {
+    await flushElapsedUnlocked();
+    const { activeSessions } = await getSession();
+    let changed = false;
+    const nextSessions = activeSessions.map(session => {
+      if (session.tabId === tabId && session.windowId === windowId && !session.paused) {
+        changed = true;
+        return { ...session, paused: true };
+      }
+      return session;
+    });
+    if (changed) await replaceSessions(nextSessions, activeSessions);
   });
-  if (changed) await replaceSessions(nextSessions, activeSessions);
 }
 
 export async function resumeSession(tabId, windowId) {
-  const { activeSessions } = await getSession();
-  let changed = false;
-  const nextSessions = activeSessions.map(session => {
-    if (session.tabId === tabId && session.windowId === windowId && session.paused) {
-      changed = true;
-      return { ...session, paused: false, startTs: Date.now() };
-    }
-    return session;
+  return serializeMutation(async () => {
+    const { activeSessions } = await getSession();
+    let changed = false;
+    const nextSessions = activeSessions.map(session => {
+      if (session.tabId === tabId && session.windowId === windowId && session.paused) {
+        changed = true;
+        return { ...session, paused: false, startTs: Date.now() };
+      }
+      return session;
+    });
+    if (changed) await replaceSessions(nextSessions, activeSessions);
   });
-  if (changed) await replaceSessions(nextSessions, activeSessions);
 }
 
 export async function stopSessionByTab(tabId) {
-  await flushElapsed({ pruneMissing: false });
-  const { activeSessions } = await getSession();
-  const nextSessions = activeSessions.filter(session => session.tabId !== tabId);
-  if (nextSessions.length !== activeSessions.length) {
-    await replaceSessions(nextSessions, activeSessions);
-  }
+  return serializeMutation(async () => {
+    await flushElapsedUnlocked({ pruneMissing: false });
+    const { activeSessions } = await getSession();
+    const nextSessions = activeSessions.filter(session => session.tabId !== tabId);
+    if (nextSessions.length !== activeSessions.length) {
+      await replaceSessions(nextSessions, activeSessions);
+    }
+  });
 }
 
 export async function stopSessionsByWindow(windowId) {
-  await flushElapsed({ pruneMissing: false });
-  const { activeSessions } = await getSession();
-  const nextSessions = activeSessions.filter(session => session.windowId !== windowId);
-  if (nextSessions.length !== activeSessions.length) {
-    await replaceSessions(nextSessions, activeSessions);
-  }
+  return serializeMutation(async () => {
+    await flushElapsedUnlocked({ pruneMissing: false });
+    const { activeSessions } = await getSession();
+    const nextSessions = activeSessions.filter(session => session.windowId !== windowId);
+    if (nextSessions.length !== activeSessions.length) {
+      await replaceSessions(nextSessions, activeSessions);
+    }
+  });
 }
 
 export async function stopSessionsByDomain(domain) {
-  await flushElapsed({ pruneMissing: false });
-  const { activeSessions } = await getSession();
-  const nextSessions = activeSessions.filter(session => session.domain !== domain);
-  if (nextSessions.length !== activeSessions.length) {
-    await replaceSessions(nextSessions, activeSessions);
-  }
+  return serializeMutation(async () => {
+    await flushElapsedUnlocked({ pruneMissing: false });
+    const { activeSessions } = await getSession();
+    const nextSessions = activeSessions.filter(session => session.domain !== domain);
+    if (nextSessions.length !== activeSessions.length) {
+      await replaceSessions(nextSessions, activeSessions);
+    }
+  });
 }
 
 export async function getDomainStatus(domain) {
