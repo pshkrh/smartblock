@@ -49,8 +49,35 @@ async function replaceSessions(nextSessions, previousSessions = []) {
   await refreshDomainAlarms(nextSessions);
 }
 
-export async function flushElapsed() {
+async function sessionTabExists(session) {
+  try {
+    const tab = await chrome.tabs.get(session.tabId);
+    return tab.windowId === session.windowId;
+  } catch {
+    return false;
+  }
+}
+
+export async function pruneMissingSessions() {
   const { activeSessions } = await getSession();
+  if (!activeSessions.length) return [];
+
+  const checks = await Promise.all(activeSessions.map(sessionTabExists));
+  const liveSessions = activeSessions.filter((_session, index) => checks[index]);
+  if (liveSessions.length !== activeSessions.length) {
+    await replaceSessions(liveSessions, activeSessions);
+  }
+  return liveSessions;
+}
+
+export async function flushElapsed({ pruneMissing = true } = {}) {
+  const { activeSessions: storedSessions } = await getSession();
+  if (!storedSessions.length) return;
+
+  const activeSessions = pruneMissing
+    ? await pruneMissingSessions()
+    : storedSessions;
+
   if (!activeSessions.length) return;
 
   const nextSessions = [];
@@ -187,7 +214,7 @@ export async function resumeSession(tabId, windowId) {
 }
 
 export async function stopSessionByTab(tabId) {
-  await flushElapsed();
+  await flushElapsed({ pruneMissing: false });
   const { activeSessions } = await getSession();
   const nextSessions = activeSessions.filter(session => session.tabId !== tabId);
   if (nextSessions.length !== activeSessions.length) {
@@ -196,7 +223,7 @@ export async function stopSessionByTab(tabId) {
 }
 
 export async function stopSessionsByWindow(windowId) {
-  await flushElapsed();
+  await flushElapsed({ pruneMissing: false });
   const { activeSessions } = await getSession();
   const nextSessions = activeSessions.filter(session => session.windowId !== windowId);
   if (nextSessions.length !== activeSessions.length) {
@@ -205,7 +232,7 @@ export async function stopSessionsByWindow(windowId) {
 }
 
 export async function stopSessionsByDomain(domain) {
-  await flushElapsed();
+  await flushElapsed({ pruneMissing: false });
   const { activeSessions } = await getSession();
   const nextSessions = activeSessions.filter(session => session.domain !== domain);
   if (nextSessions.length !== activeSessions.length) {

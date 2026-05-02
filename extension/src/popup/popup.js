@@ -111,6 +111,54 @@ function addTag(parent, className, text) {
   parent.appendChild(tag);
 }
 
+function buildNumberControl(input) {
+  const control = document.createElement('div');
+  control.className = 'number-control';
+  input.classList.add('number-input');
+
+  const stepper = document.createElement('div');
+  stepper.className = 'stepper';
+
+  for (const [className, step, label] of [
+    ['step-up', '1', 'Increase limit'],
+    ['step-down', '-1', 'Decrease limit'],
+  ]) {
+    const button = document.createElement('button');
+    button.className = `step-btn ${className}`;
+    button.type = 'button';
+    button.tabIndex = -1;
+    button.dataset.step = step;
+    button.setAttribute('aria-label', label);
+    stepper.appendChild(button);
+  }
+
+  control.append(input, stepper);
+  return control;
+}
+
+function changeNumber(input, delta) {
+  const min = input.min === '' ? -Infinity : Number(input.min);
+  const max = input.max === '' ? Infinity : Number(input.max);
+  const current = Number.parseInt(input.value, 10);
+  const fallback = Number.isFinite(min) ? min : 0;
+  const next = Math.min(max, Math.max(min, (Number.isFinite(current) ? current : fallback) + delta));
+  input.value = String(next);
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+function wireNumberSteppers(root = document) {
+  root.querySelectorAll('.step-btn').forEach(button => {
+    if (button.dataset.bound === 'true') return;
+    button.dataset.bound = 'true';
+    button.addEventListener('click', () => {
+      const input = button.closest('.number-control')?.querySelector('input[type="number"]');
+      if (!input || input.disabled) return;
+      changeNumber(input, Number.parseInt(button.dataset.step, 10));
+      input.focus();
+    });
+  });
+}
+
 function modeLabel(mode) {
   return mode === BLOCK_MODE.STRICT ? 'Strict' : 'Smart';
 }
@@ -179,7 +227,7 @@ function buildUsageRow({ domain, mode, usedMs, baseLimitMs, effectiveLimitMs, bl
   const unit = document.createElement('span');
   unit.className = 'unit-label';
   unit.textContent = 'min';
-  limitWrap.append(input, unit);
+  limitWrap.append(buildNumberControl(input), unit);
   limitCell.appendChild(limitWrap);
 
   const actionCell = document.createElement('td');
@@ -262,6 +310,30 @@ async function refreshStatusSnapshot() {
   return statusSnapshot;
 }
 
+async function sessionTabExists(session) {
+  try {
+    const tab = await chrome.tabs.get(session.tabId);
+    return tab.windowId === session.windowId;
+  } catch {
+    return false;
+  }
+}
+
+async function getActiveSessionsForDisplay() {
+  const { activeSessions = [] } = await chrome.storage.session.get('activeSessions');
+  if (!activeSessions.length) return [];
+
+  const checks = await Promise.all(activeSessions.map(sessionTabExists));
+  const liveSessions = activeSessions.filter((_session, index) => checks[index]);
+  if (liveSessions.length !== activeSessions.length) {
+    await chrome.storage.session.set({
+      activeSession: liveSessions[0] ?? null,
+      activeSessions: liveSessions,
+    });
+  }
+  return liveSessions;
+}
+
 async function clearClassificationCache() {
   return new Promise(resolve => {
     chrome.runtime.sendMessage({ type: MSG.CLEAR_CACHE }, response => {
@@ -312,13 +384,12 @@ async function render() {
       document.activeElement?.id === 'model-select') return;
 
   const config = await getConfig();
-  const [status, ollama, sessionData] = await Promise.all([
+  const [status, ollama, activeSessions] = await Promise.all([
     getStatusSnapshot(),
     getOllamaState(config.ollamaModel),
-    chrome.storage.session.get('activeSessions'),
+    getActiveSessionsForDisplay(),
   ]);
 
-  const activeSessions = sessionData.activeSessions ?? [];
   const domainState = new Map();
   const activityElapsed = new Map();
 
@@ -395,6 +466,7 @@ async function render() {
   }
 
   // Limit edit handlers
+  wireNumberSteppers(tbody);
   tbody.querySelectorAll('.limit-input').forEach(input => {
     async function saveLimit() {
       const domain = input.dataset.domain;
@@ -503,6 +575,7 @@ async function addDomain() {
 }
 
 document.getElementById('add-btn').addEventListener('click', addDomain);
+wireNumberSteppers();
 
 document.getElementById('refresh-ollama').addEventListener('click', async () => {
   const btn = document.getElementById('refresh-ollama');

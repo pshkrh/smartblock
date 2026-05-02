@@ -55,7 +55,13 @@
             <option value="smart">Smart</option>
             <option value="strict">Strict</option>
           </select>
-          <input id="add-minutes" class="field mins-field" type="number" min="1" max="1440" value="30">
+          <div class="number-control add-number-control">
+            <input id="add-minutes" class="number-input mins-field" type="number" min="1" max="1440" value="30">
+            <div class="stepper">
+              <button class="step-btn step-up" type="button" tabindex="-1" data-step="1" aria-label="Increase limit"></button>
+              <button class="step-btn step-down" type="button" tabindex="-1" data-step="-1" aria-label="Decrease limit"></button>
+            </div>
+          </div>
           <span class="unit-label">min</span>
           <button id="add-btn">Add</button>
         </div>

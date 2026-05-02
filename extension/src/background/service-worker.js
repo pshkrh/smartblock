@@ -6,6 +6,7 @@ import {
   onVerdictChanged, onWindowBlurred,
   flushElapsed, setLimitReachedCallback, getDomainStatus,
   pauseSession, resumeSession, stopSessionByTab, stopSessionsByWindow, stopSessionsByDomain,
+  pruneMissingSessions,
 } from './timer.js';
 import { enforceBlock, isDomainBlocked, unblockDomain } from './blocker.js';
 import {
@@ -84,6 +85,14 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
   const { currentTab } = await getSession();
   await stopSessionByTab(tabId);
   if (currentTab?.tabId === tabId) {
+    await setCurrentTab(null);
+  }
+});
+
+chrome.windows.onRemoved.addListener(async (windowId) => {
+  const { currentTab } = await getSession();
+  await stopSessionsByWindow(windowId);
+  if (currentTab?.windowId === windowId) {
     await setCurrentTab(null);
   }
 });
@@ -304,6 +313,7 @@ async function confirmNoVideoPlaying(tabId) {
 }
 
 async function buildStatusResponse() {
+  await pruneMissingSessions();
   const [domains, activity] = await Promise.all([getTodayDomains(), getTodayActivity()]);
   const statuses = await Promise.all(domains.map(d => getDomainStatus(d)));
   return { domains: statuses, activity };

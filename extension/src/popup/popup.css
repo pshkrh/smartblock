@@ -358,9 +358,9 @@ tr.blocked {
   min-width: 0;
 }
 
-.limit-input,
 .field,
-.mode-select {
+.mode-select,
+.number-control {
   height: 30px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -370,16 +370,84 @@ tr.blocked {
   line-height: 1.2;
 }
 
-.limit-input {
-  width: 60px;
-  padding: 4px 6px;
+.number-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 18px;
+  width: 68px;
+  overflow: hidden;
+}
+
+.number-input {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  line-height: 1.2;
+  outline: 0;
+  padding: 4px 5px 4px 6px;
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
 
-.limit-input:focus,
+.number-input::-webkit-outer-spin-button,
+.number-input::-webkit-inner-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
+}
+
+.number-input[type="number"] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.stepper {
+  display: grid;
+  grid-template-rows: 1fr 1fr;
+  border-left: 1px solid var(--border);
+  background: var(--surface-soft);
+}
+
+.step-btn {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0;
+}
+
+.step-btn + .step-btn {
+  border-top: 1px solid rgba(43, 52, 57, 0.72);
+}
+
+.step-btn::before {
+  content: "";
+  width: 0;
+  height: 0;
+  border-right: 4px solid transparent;
+  border-left: 4px solid transparent;
+}
+
+.step-up::before {
+  border-bottom: 5px solid currentColor;
+}
+
+.step-down::before {
+  border-top: 5px solid currentColor;
+}
+
+.step-btn:hover {
+  color: var(--teal);
+}
+
 .field:focus,
-.mode-select:focus {
+.mode-select:focus,
+.number-control:focus-within {
   border-color: var(--teal);
   outline: 2px solid rgba(33, 199, 189, 0.18);
   outline-offset: 0;
@@ -442,12 +510,6 @@ tr.blocked {
 
 .domain-field {
   width: 100%;
-}
-
-.mins-field {
-  width: 68px;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
 }
 
 .mode-field {
