@@ -3,12 +3,12 @@ import { ruleClassify, VERDICT } from './rules.js';
 import { getCached, getOverride, setCached } from './storage.js';
 
 function buildPrompt(url, title, snippet) {
-  return `Classify this web page as either "productive" or "entertainment".
+  return `Decide whether this specific web page should count against a focus time limit.
 
-"productive": learning, work, reference, documentation, research, programming, news of substance, professional content.
-"entertainment": vlogs, memes, short-form video, gossip, casual social feeds, gaming streams, celebrity content, leisure browsing.
+"productive": work, study, research, reference, documentation, programming, professional tasks, deliberate learning, or substantive news.
+"entertainment": leisure, passive consumption, social browsing, shopping, humor, gossip, drama, sports fandom, games, reaction content, or curiosity browsing.
 
-Use the URL, page title, and page text together. For video/social/article pages, classify the specific page content, not the whole website.
+Use the URL, page title, and page text together. Classify the specific page content, not the whole website. For mixed-use pages, choose the verdict that best matches the page's primary purpose.
 Respond with strict JSON only: {"verdict": "productive"|"entertainment", "confidence": 0.0-1.0}
 
 URL: ${url}
