@@ -1,0 +1,58 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    name: Build release package
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate JavaScript
+        run: find extension -name '*.js' -print0 | xargs -0 -n1 node --check
+
+      - name: Validate manifest
+        run: python3 -m json.tool extension/manifest.json > /dev/null
+
+      - name: Validate icon dimensions
+        run: |
+          python3 - <<'PY'
+          import struct
+          from pathlib import Path
+
+          expected = {
+              "extension/icons/icon16.png": (16, 16),
+              "extension/icons/icon32.png": (32, 32),
+              "extension/icons/icon48.png": (48, 48),
+              "extension/icons/icon128.png": (128, 128),
+          }
+
+          for path, dimensions in expected.items():
+              data = Path(path).read_bytes()
+              if data[:8] != b"\x89PNG\r\n\x1a\n":
+                  raise SystemExit(f"{path} is not a PNG")
+              width, height = struct.unpack(">II", data[16:24])
+              if (width, height) != dimensions:
+                  raise SystemExit(
+                      f"{path} is {width}x{height}, expected {dimensions[0]}x{dimensions[1]}"
+                  )
+          PY
+
+      - name: Build extension zip
+        run: |
+          cd extension
+          zip -r "../smartblock-extension-${GITHUB_REF_NAME}.zip" . -x '*.DS_Store'
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: smartblock-extension-${{ github.ref_name }}.zip

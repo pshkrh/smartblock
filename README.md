@@ -9,6 +9,12 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/pshkrh/smartblock/releases">
+    <img src="https://img.shields.io/github/v/release/pshkrh/smartblock?display_name=tag" alt="Latest release">
+  </a>
+</p>
+
+<p align="center">
   Chromium MV3 extension • Local Ollama classification • Smart and Strict blocking modes
 </p>
 
@@ -127,6 +133,17 @@ Use `Smart` when only some pages on a site should count. Use `Strict` when every
 ## Block Behavior
 
 When a domain hits its limit, SmartBlock redirects the tab to a block page. To continue, raise the domain limit from the popup. Removing the domain clears today's stored usage and activity for that site.
+
+## GitHub Releases
+
+Releases are built by GitHub Actions when a version tag is pushed. The workflow validates the extension JavaScript, checks the manifest, verifies icon dimensions, zips the `extension/` directory, and attaches the zip to a GitHub Release.
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The uploaded zip can be installed by downloading it, extracting it, and loading the extracted extension folder from `chrome://extensions` or `brave://extensions`.
 
 ## Repository Layout
 
