@@ -58,7 +58,8 @@ export async function classify(domain, url, title, snippet, options = {}) {
   const override = await getOverride(domain, url);
   if (override) return { verdict: override, source: 'override' };
 
-  // Rule pre-pass (handles HARD lists, unknown domains, and curated fast-paths)
+  // Rule pre-pass keeps untracked domains out of Ollama. Smart tracked domains
+  // fall through to override/cache/model classification.
   const ruleVerdict = ruleClassify(domain, url, title, options);
   if (ruleVerdict !== null) {
     return { verdict: ruleVerdict, source: 'rule' };

@@ -27,12 +27,14 @@ chrome.runtime.onInstalled.addListener(async () => {
   await initAlarms();
   await checkMissedReset();
   await reconcileBlocks();
+  await reconcileActiveTabs();
 });
 
 chrome.runtime.onStartup.addListener(async () => {
   await initAlarms();
   await checkMissedReset();
   await reconcileBlocks();
+  await reconcileActiveTabs();
 });
 
 // Sync DNR rules with current usage vs limits.
@@ -90,14 +92,7 @@ chrome.windows.onFocusChanged.addListener(async (windowId) => {
   if (windowId === chrome.windows.WINDOW_ID_NONE) {
     await onWindowBlurred();
   } else {
-    // Re-classify active tabs in every window so an entertainment tab that kept
-    // playing in another window resumes after Chrome regains focus.
-    const tabs = await chrome.tabs.query({ active: true });
-    const focused = tabs.filter(tab => tab.windowId === windowId);
-    const others = tabs.filter(tab => tab.windowId !== windowId);
-    for (const tab of [...focused, ...others]) {
-      await handleTabFocus(tab.id, tab.windowId);
-    }
+    await reconcileActiveTabs(windowId);
   }
 });
 
@@ -154,11 +149,7 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
 chrome.alarms.onAlarm.addListener(async ({ name }) => {
   if (name === ALARM_POLL) {
     await flushElapsed();
-    // Re-classify active tabs in every window to keep multi-window sessions in sync.
-    const tabs = await chrome.tabs.query({ active: true });
-    for (const tab of tabs) {
-      await handleTabFocus(tab.id, tab.windowId);
-    }
+    await reconcileActiveTabs();
   }
   if (name === ALARM_MIDNIGHT) {
     await performReset();
@@ -172,6 +163,20 @@ chrome.alarms.onAlarm.addListener(async ({ name }) => {
 });
 
 // --- Core classification + timer logic ---
+
+async function reconcileActiveTabs(preferredWindowId = null) {
+  const tabs = await chrome.tabs.query({ active: true });
+  const orderedTabs = preferredWindowId === null
+    ? tabs
+    : [
+        ...tabs.filter(tab => tab.windowId === preferredWindowId),
+        ...tabs.filter(tab => tab.windowId !== preferredWindowId),
+      ];
+
+  for (const tab of orderedTabs) {
+    await handleTabFocus(tab.id, tab.windowId);
+  }
+}
 
 async function handleTabFocus(tabId, windowId) {
   let tab;
@@ -259,23 +264,33 @@ async function processTabInfo(tabId, windowId, domain, { url, title, snippet, vi
 
 async function handleVideoState(tab, playing) {
   if (!tab?.id) return;
+  let currentTab;
+  try {
+    currentTab = await chrome.tabs.get(tab.id);
+  } catch {
+    return;
+  }
 
   const { activeSessions } = await getSession();
   const activeSession = activeSessions.find(
-    session => session.tabId === tab.id && session.windowId === tab.windowId
+    session => session.tabId === currentTab.id && session.windowId === currentTab.windowId
   );
   if (!activeSession) {
+    if (playing && currentTab.active) {
+      await handleTabFocus(currentTab.id, currentTab.windowId);
+      await reconcileActiveTabs(currentTab.windowId);
+    }
     return;
   }
   if (activeSession.mode === BLOCK_MODE.STRICT) return;
 
   if (playing) {
-    await resumeSession(tab.id, tab.windowId);
+    await resumeSession(currentTab.id, currentTab.windowId);
+    await reconcileActiveTabs(currentTab.windowId);
   } else {
-    const stillPaused = await confirmNoVideoPlaying(tab.id);
-    if (stillPaused) await pauseSession(tab.id, tab.windowId);
+    const stillPaused = await confirmNoVideoPlaying(currentTab.id);
+    if (stillPaused) await pauseSession(currentTab.id, currentTab.windowId);
   }
-
 }
 
 async function confirmNoVideoPlaying(tabId) {

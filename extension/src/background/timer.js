@@ -11,6 +11,10 @@ function uniqueDomains(sessions) {
   return [...new Set(sessions.map(session => session.domain))];
 }
 
+function uniqueActivityIds(sessions) {
+  return [...new Set(sessions.map(session => session.activityId).filter(Boolean))];
+}
+
 async function scheduleBlockAlarm(domain) {
   const [usage, limitMs] = await Promise.all([getUsage(domain), getLimitMs(domain)]);
   const effectiveLimit = limitMs + (usage.extraMs ?? 0);
@@ -52,7 +56,7 @@ export async function flushElapsed() {
   const nextSessions = [];
   const usageCache = new Map();
   const limitCache = new Map();
-  const domainProgress = new Map();
+  const domainGroups = new Map();
   const now = Date.now();
 
   for (const session of activeSessions) {
@@ -69,16 +73,13 @@ export async function flushElapsed() {
 
     nextSessions.push({ ...session, startTs: now });
 
-    const existing = domainProgress.get(session.domain);
-    if (!existing || elapsed > existing.elapsed) {
-      domainProgress.set(session.domain, {
-        elapsed,
-        activityId: session.activityId,
-      });
-    }
+    const group = domainGroups.get(session.domain) ?? { elapsed: 0, sessions: [] };
+    group.elapsed = Math.max(group.elapsed, elapsed);
+    group.sessions.push(session);
+    domainGroups.set(session.domain, group);
   }
 
-  for (const [domain, progress] of domainProgress.entries()) {
+  for (const [domain, group] of domainGroups.entries()) {
     let current = usageCache.get(domain);
     if (!current) {
       current = await getUsage(domain);
@@ -93,12 +94,16 @@ export async function flushElapsed() {
 
     const effectiveLimit = limitMs + (current.extraMs ?? 0);
     const remaining = Math.max(0, effectiveLimit - current.ms);
-    const banked = Math.min(progress.elapsed, remaining);
+    const banked = Math.min(group.elapsed, remaining);
 
     if (banked > 0) {
       const usage = await addMs(domain, banked);
       usageCache.set(domain, usage);
-      await addActivityMs(progress.activityId, banked);
+      const activityIds = uniqueActivityIds(group.sessions);
+      const perActivityMs = activityIds.length > 0 ? banked / activityIds.length : 0;
+      for (const activityId of activityIds) {
+        await addActivityMs(activityId, perActivityMs);
+      }
       if (usage.ms >= effectiveLimit && onLimitReached) {
         onLimitReached(domain);
       }
