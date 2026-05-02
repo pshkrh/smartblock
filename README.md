@@ -8,15 +8,9 @@
   <strong>Smart website blocking that only counts distracting time.</strong>
 </p>
 
-<p align="center">
-  <a href="https://github.com/pshkrh/smartblock/releases">
-    <img src="https://img.shields.io/github/v/release/pshkrh/smartblock?display_name=tag" alt="Latest release">
-  </a>
-  <a href="https://github.com/pshkrh/smartblock/blob/main/LICENSE">
-    <img src="https://img.shields.io/github/license/pshkrh/smartblock" alt="MIT License">
-  </a>
-  <img src="https://img.shields.io/badge/platform-Chrome%20extension-4285F4" alt="Chrome extension">
-</p>
+[![Latest release](https://img.shields.io/github/v/release/pshkrh/smartblock?display_name=tag)](https://github.com/pshkrh/smartblock/releases)
+[![MIT License](https://img.shields.io/github/license/pshkrh/smartblock)](https://github.com/pshkrh/smartblock/blob/main/LICENSE)
+![Chrome extension](https://img.shields.io/badge/platform-Chrome%20extension-4285F4)
 
 <p align="center">
   Chromium MV3 extension • Local Ollama classification • Smart and Strict blocking modes
